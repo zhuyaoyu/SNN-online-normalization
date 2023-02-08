@@ -1,0 +1,17 @@
+代码倒挺简单的，总体来说就是neuronal_charge和neuronal_reset的过程中加了detach，切断了相应的反向传播通道
+
+neuron dropout的时候好像self.mask没动过？——是动了的，forward函数里有调用
+
+spiking_vgg.py里的replace和WrapedSNNOp是啥？
+WrapedSNNOp似乎是在spike之外记录了个rate，不知道有啥用
+OnlineSpikingVGGF里的self.fb_conv那条线融合了上一个iter过完主干网络之后的feature，暂时不知道有啥用
+
+charge -> fire -> reset，charge是自己的，fire和reset都是继承spikingjelly的
+
+
+python train_dvsgesture.py -data_dir ../../datasets/dvs128_gesture/ -out_dir logs/dvsgesture -gpu-id 5
+
+python train_cifar.py -data_dir ../../datasets/cifar100/ -dataset cifar100 -BPTT -out_dir logs/cifar100_BPTT -gpu-id 4
+python train_cifar.py -data_dir ../../datasets/cifar100/ -dataset cifar100 -BPTT -out_dir logs/cifar100_BPTT_BN -BN -gpu-id 5
+python train_cifar.py -data_dir ../../datasets/cifar100/ -dataset cifar100 -BPTT -out_dir logs/cifar100_BPTT_WS -WS -gpu-id 6
+python train_cifar.py -data_dir ../../datasets/cifar100/ -dataset cifar100 -BPTT -out_dir logs/cifar100_BPTT_BN_WS -BN -WS -gpu-id 7
