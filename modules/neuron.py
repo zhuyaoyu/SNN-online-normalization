@@ -30,8 +30,6 @@ class OnlineIFNode(IFNode):
 
     def forward(self, x: torch.Tensor, **kwargs):
         init = kwargs.get('init', False)
-        save_spike = kwargs.get('save_spike', False)
-        output_type = kwargs.get('output_type', 'spike')
         if init:
             self.forward_init(x)
 
@@ -42,21 +40,7 @@ class OnlineIFNode(IFNode):
         if self.dropout > 0.0 and self.training:
             spike = self.mask.expand_as(spike) * spike
 
-        if save_spike:
-            self.spike = spike
-
-        if self.track_rate:
-            with torch.no_grad():
-                if self.rate_tracking == None:
-                    self.rate_tracking = spike.clone().detach()
-                else:
-                    self.rate_tracking = self.rate_tracking + spike.clone().detach()
-
-        if output_type == 'spike_rate':
-            assert self.track_rate == True
-            return torch.cat((spike, self.rate_tracking), dim=0)
-        else:
-            return spike
+        return spike
 
 
 class OnlineLIFNode(LIFNode):
@@ -67,8 +51,6 @@ class OnlineLIFNode(LIFNode):
         super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset)
         self.track_rate = track_rate
         self.dropout = neuron_dropout
-        if self.track_rate:
-            self.register_memory('rate_tracking', None)
         if self.dropout > 0.0:
             self.register_memory('mask', None)
 
@@ -82,8 +64,11 @@ class OnlineLIFNode(LIFNode):
             self.v = self.v.detach() * (1 - 1. / self.tau) + self.v_reset / self.tau + x
 
     # should be initialized at the first time step
-    def forward_init(self, x: torch.Tensor):
-        self.v = torch.zeros_like(x)
+    def forward_init(self, x: torch.Tensor, shape=None):
+        if shape is None:
+            self.v = torch.zeros_like(x)
+        else:
+            self.v = torch.zeros(*shape, device=x.device)
         self.rate_tracking = None
         if self.dropout > 0.0 and self.training:
             self.mask = torch.zeros_like(x).bernoulli_(1 - self.dropout)
@@ -91,8 +76,6 @@ class OnlineLIFNode(LIFNode):
 
     def forward(self, x: torch.Tensor, **kwargs):
         init = kwargs.get('init', False)
-        save_spike = kwargs.get('save_spike', False)
-        output_type = kwargs.get('output_type', 'spike')
         if init:
             self.forward_init(x)
 
@@ -103,18 +86,4 @@ class OnlineLIFNode(LIFNode):
         if self.dropout > 0.0 and self.training:
             spike = self.mask.expand_as(spike) * spike
 
-        if save_spike:
-            self.spike = spike
-
-        if self.track_rate:
-            with torch.no_grad():
-                if self.rate_tracking == None:
-                    self.rate_tracking = spike.clone().detach()
-                else:
-                    self.rate_tracking = self.rate_tracking * (1 - 1. / self.tau) + spike.clone().detach()
-
-        if output_type == 'spike_rate':
-            assert self.track_rate == True
-            return torch.cat((spike, self.rate_tracking), dim=0)
-        else:
-            return spike
+        return spike

@@ -101,8 +101,8 @@ def main():
     testset = dataloader(root=args.data_dir, train=False, download=False, transform=transform_test)
     test_data_loader = data.DataLoader(testset, batch_size=args.b, shuffle=False, num_workers=args.j)
 
-    #net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron.OnlineLIFNode, tau=args.tau, surrogate_function=surrogate.QuasiClamp(alpha=1.), track_rate=True, c_in=3, num_classes=num_classes, neuron_dropout=args.drop_rate, grad_with_rate=True, fc_hw=1, v_reset=None)
-    net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron.OnlineLIFNode, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=3, num_classes=num_classes, neuron_dropout=args.drop_rate, grad_with_rate=True, fc_hw=1, v_reset=None, BN=args.BN, weight_standardization=args.WS, detach_reset=not args.BPTT)
+    #net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron.OnlineLIFNode, tau=args.tau, surrogate_function=surrogate.QuasiClamp(alpha=1.), track_rate=True, c_in=3, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, v_reset=None)
+    net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron.OnlineLIFNode, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=3, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, v_reset=None, BN=args.BN, weight_standardization=args.WS, detach_reset=not args.BPTT)
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
     net.cuda()
@@ -200,6 +200,7 @@ def main():
                 bptt_loss = 0
             if not args.online_update:
                 optimizer.zero_grad()
+            
             for t in range(t_step):
                 if args.online_update:
                     optimizer.zero_grad()
