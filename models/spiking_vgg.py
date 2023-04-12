@@ -64,10 +64,10 @@ class OnlineSpikingVGG(nn.Module):
             self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
             self.classifier = SequentialModule(
                 single_step_neuron,
-                SWSLinearNeuron(512 * 7 * 7, 4096, **kwargs, neuron_dropout=0.0),
+                SWSLinearNeuron(512 * 7 * 7, 4096, neuron=single_step_neuron(), **kwargs),
                 Scale(2.74),
                 nn.Dropout(),
-                SWSLinearNeuron(4096, 4096, **kwargs, neuron_dropout=0.0),
+                SWSLinearNeuron(4096, 4096, neuron=single_step_neuron(), **kwargs),
                 Scale(2.74),
                 nn.Dropout(),
                 nn.Linear(4096, num_classes),
@@ -112,7 +112,8 @@ class OnlineSpikingVGG(nn.Module):
                     use_stride_2 = False
                 else:
                     stride = 1
-                convNeuron = SWSConvNeuron(in_channels, v, kernel_size=3, padding=1, stride=stride, **kwargs)
+                # neuron = OnlineLIFNode(tau = 2., surrogate_function = surrogate.Sigmoid(), dropout = 0.0)
+                convNeuron = SWSConvNeuron(in_channels, v, kernel_size=3, padding=1, stride=stride, neuron=neuron(), **kwargs)
                 if BN:
                     bn = nn.BatchNorm2d(v)
                     layers += [convNeuron, bn]
