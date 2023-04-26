@@ -11,11 +11,3 @@ OTTT的实现方式应该还是和论文里不一致的。
 
 charge -> fire -> reset，charge是自己的，fire和reset都是继承spikingjelly的
 
-
-python train_dvsgesture.py -data_dir ../../datasets/dvs128_gesture/ -out_dir logs/dvsgesture -gpu-id 5
-
-python train_cifar.py -data_dir ../../datasets/cifar100/ -dataset cifar100 -weight_decay 0.0005 -out_dir logs/cifar100_WD -gpu-id 1
-
-python train_cifar.py -data_dir ../../datasets/cifar100/ -dataset cifar100 -BPTT -out_dir logs/cifar100_BPTT_BN -BN -gpu-id 5
-python train_cifar.py -data_dir ../../datasets/cifar100/ -dataset cifar100 -BPTT -out_dir logs/cifar100_BPTT_WS -WS -gpu-id 6
-python train_cifar.py -data_dir ../../datasets/cifar100/ -dataset cifar100 -BPTT -out_dir logs/cifar100_BPTT_BN_WS_WD -BN -WS -weight_decay 0.0005 -lr 0.05 -gpu-id 7

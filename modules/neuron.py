@@ -3,17 +3,15 @@ import torch
 import torch.nn as nn
 from . import surrogate
 from .neuron_spikingjelly import IFNode, LIFNode, ParametricLIFNode
+import math
 
 class OnlineIFNode(IFNode):
     def __init__(self, v_threshold: float = 1., v_reset: float = None,
             surrogate_function: Callable = surrogate.Sigmoid(), detach_reset: bool = True,
-            track_rate: bool = True, neuron_dropout: float = 0.0, **kwargs):
+            neuron_dropout: float = 0.0, **kwargs):
 
         super().__init__(v_threshold, v_reset, surrogate_function, detach_reset)
-        self.track_rate = track_rate
         self.dropout = neuron_dropout
-        if self.track_rate:
-            self.register_memory('rate_tracking', None)
         if self.dropout > 0.0:
             self.register_memory('mask', None)
 
@@ -23,7 +21,6 @@ class OnlineIFNode(IFNode):
     # should be initialized at the first time step
     def forward_init(self, x: torch.Tensor):
         self.v = torch.zeros_like(x)
-        self.rate_tracking = None
         if self.dropout > 0.0 and self.training:
             self.mask = torch.zeros_like(x).bernoulli_(1 - self.dropout)
             self.mask = self.mask.requires_grad_(False) / (1 - self.dropout)
@@ -49,10 +46,9 @@ class OnlineIFNode(IFNode):
 class OnlineLIFNode(LIFNode):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
             v_reset: float = None, surrogate_function: Callable = surrogate.Sigmoid(),
-            detach_reset: bool = True, track_rate: bool = True, neuron_dropout: float = 0.0, **kwargs):
+            detach_reset: bool = True, neuron_dropout: float = 0.0, **kwargs):
 
         super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset)
-        self.track_rate = track_rate
         self.dropout = neuron_dropout
         if self.dropout > 0.0:
             self.register_memory('mask', None)
@@ -68,10 +64,11 @@ class OnlineLIFNode(LIFNode):
 
     # should be initialized at the first time step
     def forward_init(self, x: torch.Tensor, shape=None):
-        if shape is None:
-            self.v = torch.zeros_like(x)
-        else:
-            self.v = torch.zeros(*shape, device=x.device)
+        # if shape is None:
+        #     self.v = torch.zeros_like(x)
+        # else:
+        #     self.v = torch.zeros(*shape, device=x.device)
+        self.v = 0
         if self.dropout > 0.0 and self.training:
             self.mask = torch.zeros_like(x).bernoulli_(1 - self.dropout)
             self.mask = self.mask.requires_grad_(False) / (1 - self.dropout)
@@ -85,6 +82,7 @@ class OnlineLIFNode(LIFNode):
             self.forward_init(x)
 
         self.get_decay_coef()
+        self.v_float_to_tensor(x)
         self.neuronal_charge(x)
         spike = self.neuronal_fire()
         self.neuronal_reset(spike)
@@ -92,17 +90,28 @@ class OnlineLIFNode(LIFNode):
         if self.dropout > 0.0 and self.training:
             spike = self.mask.expand_as(spike) * spike
 
+        self.spike = spike
         return spike
 
 
-class OnlinePLIFNode(ParametricLIFNode):
+class MyLIFNode(LIFNode):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
             v_reset: float = None, surrogate_function: Callable = surrogate.Sigmoid(),
-            detach_reset: bool = True, track_rate: bool = True, neuron_dropout: float = 0.0, **kwargs):
+            detach_reset: bool = True, **kwargs):
+        super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset)
+
+
+class OnlinePLIFNode(ParametricLIFNode):
+    def __init__(self, tau: float = 2., tau_shape = [1], decay_input: bool = False, v_threshold: float = 1.,
+            v_reset: float = None, surrogate_function: Callable = surrogate.Sigmoid(),
+            detach_reset: bool = True, neuron_dropout: float = 0.0, **kwargs):
 
         super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset)
-        self.track_rate = track_rate
+        init_w = - math.log(tau - 1.)
+        self.w = nn.Parameter(torch.ones(*tau_shape) * init_w)
+
         self.dropout = neuron_dropout
+        self.spike = None
         if self.dropout > 0.0:
             self.register_memory('mask', None)
 
@@ -118,19 +127,14 @@ class OnlinePLIFNode(ParametricLIFNode):
     # should be initialized at the first time step
     def forward_init(self, x: torch.Tensor, shape=None):
         # x: B * C * H * W
-        tau_shape = [1 for _ in x.shape]
         if shape is None:
             shape = x.shape
         self.v = torch.zeros(*shape, device=x.device)
-        if len(shape) > 2:
-            tau_shape[1] = shape[1]
-
-        self.w = nn.Parameter(torch.ones(tau_shape, device=x.device) * self.w)
+        
         if self.dropout > 0.0 and self.training:
             self.mask = torch.zeros_like(x).bernoulli_(1 - self.dropout)
             self.mask = self.mask.requires_grad_(False) / (1 - self.dropout)
-        self.decay_acc = torch.zeros(*shape, device=x.device)
-        self.mul = torch.zeros_like(self.decay_acc)
+        self.decay_acc = torch.zeros(*shape, device=x.device, requires_grad=False)
     
     def get_decay_coef(self):
         self.decay = self.w.sigmoid()
