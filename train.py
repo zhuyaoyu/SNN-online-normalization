@@ -19,7 +19,7 @@ import argparse
 import math
 import torch.utils.data as data
 
-_seed_ = 2022
+_seed_ = 2023
 import random
 random.seed(_seed_)
 
@@ -62,7 +62,6 @@ def main():
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
     net.cuda()
-
 
     optimizer = None
     if args.opt == 'SGD':
