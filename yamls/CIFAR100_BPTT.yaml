@@ -4,8 +4,9 @@ b: 128
 epochs: 300
 T_max: 300
 weight_decay: 0.0005
-WS: "True"
-BPTT: "True"
+WS: False
+BN: True
+BPTT: True
 tau_online_level: 1
 weight_online_level: 1
 data_dir: "../../datasets/cifar100/"

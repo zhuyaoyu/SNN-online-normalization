@@ -64,17 +64,17 @@ class OnlineLIFNode(LIFNode):
 
     # should be initialized at the first time step
     def forward_init(self, x: torch.Tensor, shape=None):
-        # if shape is None:
-        #     self.v = torch.zeros_like(x)
-        # else:
-        #     self.v = torch.zeros(*shape, device=x.device)
-        self.v = 0
+        if shape is None:
+            self.v = torch.zeros_like(x)
+        else:
+            self.v = torch.zeros(*shape, device=x.device)
+        # self.v = 0.
         if self.dropout > 0.0 and self.training:
             self.mask = torch.zeros_like(x).bernoulli_(1 - self.dropout)
             self.mask = self.mask.requires_grad_(False) / (1 - self.dropout)
     
     def get_decay_coef(self):
-        self.decay = 1 - 1. / self.tau
+        self.decay = torch.tensor(1 - 1. / self.tau)
 
     def forward(self, x: torch.Tensor, **kwargs):
         init = kwargs.get('init', False)
@@ -99,6 +99,12 @@ class MyLIFNode(LIFNode):
             v_reset: float = None, surrogate_function: Callable = surrogate.Sigmoid(),
             detach_reset: bool = True, **kwargs):
         super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset)
+        self.spike = None
+    
+    def single_step_forward(self, x: torch.Tensor, **kwargs):
+        spike = super().single_step_forward(x)
+        self.spike = spike
+        return spike
 
 
 class OnlinePLIFNode(ParametricLIFNode):

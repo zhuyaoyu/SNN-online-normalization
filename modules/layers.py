@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 from . import surrogate
-from .neuron import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode
+from .neurons import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode
 import config
 
 import torch.backends.cudnn as cudnn
@@ -48,12 +48,13 @@ def get_mul(decay, s_out, v, dsdu):
 
 def neuron_forward(neuron, s_in, x):
     v_last = neuron.v
+    neuron.v_float_to_tensor(x)
     neuron.neuronal_charge(x)
     s_out = neuron.neuronal_fire()
     # dudu = neuron.decay
     # duds = s_out * neuron.v_threshold if neuron.v_reset is None else s_out * (neuron.v - neuron.v_reset)
+    dsdu = neuron.surrogate_function.backward(torch.ones_like(s_out), neuron.v - neuron.v_threshold, neuron.surrogate_function.alpha)
     if config.args.tau_online_level >= 3:
-        dsdu = neuron.surrogate_function.backward(torch.ones_like(s_out), neuron.v - neuron.v_threshold, neuron.surrogate_function.alpha)
         mul = get_mul(neuron.decay, s_out, neuron.v, dsdu)
     if isinstance(neuron, OnlinePLIFNode):
         lvl = config.args.tau_online_level
@@ -76,7 +77,7 @@ def neuron_forward(neuron, s_in, x):
     if neuron.dropout > 0.0 and neuron.training:
         s_out = neuron.mask.expand_as(s_out) * s_out
     neuron.spike = s_out
-    return s_out
+    return s_out, dsdu
 
 
 def calc_grad_w(grad_w_func, grad_u, s_in, layer, neuron, s_out, dsdu, lvl):
@@ -149,20 +150,24 @@ class SWSConvNeuron(nn.Conv2d):
         weight = get_weight_sws(self.weight, self.gain, self.eps)
         
         self.neuron.get_decay_coef()
-        spike = OnlineConv.apply(spike, weight, self.bias, self.neuron.decay, (self.stride, self.padding, self.dilation, self.groups), self)
+        spike = OnlineFunc.apply('conv', spike, weight, self.bias, self.neuron.decay, (self.stride, self.padding, self.dilation, self.groups), self)
         return spike
 
 
-class OnlineConv(torch.autograd.Function):
+class OnlineFunc(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, s_in, weight, bias, decay, convConfig, layer):
+    def forward(ctx, type, s_in, weight, bias, decay, convConfig, layer):
         # need du/du (decay), du/ds (reset) and ds/du (surrogate)
-        x = F.conv2d(s_in, weight, bias, *convConfig)
-        s_out = neuron_forward(layer.neuron, s_in, x)
+        if type == 'conv':
+            x = F.conv2d(s_in, weight, bias, *convConfig)
+            ctx.convConfig = convConfig
+        else:
+            x = F.linear(s_in, weight, bias)
+        s_out, dsdu = neuron_forward(layer.neuron, s_in, x)
 
         ctx.layer = layer
-        ctx.convConfig = convConfig
-        ctx.save_for_backward(s_in, weight, s_out)
+        ctx.type = type
+        ctx.save_for_backward(s_in, weight, s_out, dsdu)
         return s_out
     
     @staticmethod
@@ -170,14 +175,17 @@ class OnlineConv(torch.autograd.Function):
         # shape of grad: B*C*H*W
         layer = ctx.layer
         neuron = layer.neuron
-        stride, padding, dilation, groups = ctx.convConfig
-        (s_in, weight, s_out) = ctx.saved_tensors
-        dsdu = neuron.surrogate_function.backward(torch.ones_like(neuron.v), neuron.v - neuron.v_threshold, neuron.surrogate_function.alpha)
+        (s_in, weight, s_out, dsdu) = ctx.saved_tensors
         grad_u = grad * dsdu
         grad_b = torch.sum(grad_u, dim=[i for i in range(len(grad_u.shape)) if i != 1])
-        grad_input = conv_backward_input(grad_u, s_in, weight, padding, stride, dilation, groups)
-        
-        grad_w_func = lambda grad_output, input: conv_backward_weight(grad_output, input, weight, padding, stride, dilation, groups)
+
+        if ctx.type == 'conv':
+            stride, padding, dilation, groups = ctx.convConfig
+            grad_input = conv_backward_input(grad_u, s_in, weight, padding, stride, dilation, groups)    
+            grad_w_func = lambda grad_output, input: conv_backward_weight(grad_output, input, weight, padding, stride, dilation, groups)
+        else:
+            grad_input = torch.matmul(grad_u, weight)
+            grad_w_func = lambda grad_output, input: torch.matmul(grad_output.transpose(1,2), input)
         grad_weight = calc_grad_w(grad_w_func, grad_u, s_in, layer, neuron, s_out, dsdu, config.args.weight_online_level)
         
         if isinstance(neuron, OnlinePLIFNode):
@@ -185,7 +193,7 @@ class OnlineConv(torch.autograd.Function):
             grad_decay = torch.sum(grad_u * neuron.decay_acc).reshape(1)
         else:
             grad_decay = None
-        return grad_input, grad_weight, grad_b, grad_decay, None, None
+        return None, grad_input, grad_weight, grad_b, grad_decay, None, None
 
 
 class SWSLinearNeuron(nn.Linear):
@@ -212,37 +220,7 @@ class SWSLinearNeuron(nn.Linear):
         weight = get_weight_sws(self.weight, self.gain, self.eps)
 
         self.neuron.get_decay_coef()
-        spike = OnlineLinear.apply(spike, weight, self.bias, self.decay, self)
+        spike = OnlineFunc.apply('linear', spike, weight, self.bias, self.decay, None, self)
         return spike
 
 
-class OnlineLinear(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, s_in, weight, bias, decay, layer):
-        # need du/du (decay), du/ds (reset) and ds/du (surrogate)
-        x = F.linear(s_in, weight, bias)
-        s_out, dsdu = neuron_forward(layer.neuron, s_in, x)
-
-        ctx.save_for_backward(s_in, weight, dsdu)
-        ctx.layer = layer
-        return s_out
-    
-    @staticmethod
-    def backward(ctx, grad):
-        layer = ctx.layer
-        neuron = layer.neuron
-        (s_in, weight, dsdu) = ctx.saved_tensors
-        grad_u = grad * dsdu
-        grad_b = torch.sum(grad_u, dim=[i for i in range(len(grad_u.shape)) if i != 1])
-        grad_input = torch.matmul(grad_u, weight)
-
-        grad_w_func = lambda grad_output, input: torch.matmul(grad_output.transpose(1,2), input)
-        grad_weight = calc_grad_w(grad_w_func, grad, grad_u, s_in, layer, neuron, config.args.weight_online_level)
-        
-        if isinstance(neuron, OnlinePLIFNode):
-            # grad_decay = torch.sum(grad_u * neuron.decay_acc, dim=[0], keepdim=True)
-            grad_decay = torch.sum(grad_u * neuron.decay_acc).reshape(1)
-        else:
-            grad_decay = None
-        
-        return grad_input, grad_weight, grad_b, grad_decay, None

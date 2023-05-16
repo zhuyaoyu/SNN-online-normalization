@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Function
-from modules.layer import ScaledWSConv2d, ScaledWSLinear, SWSConvNeuron, SWSLinearNeuron
-from modules.neuron import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, MyLIFNode
+from modules.layers import ScaledWSConv2d, ScaledWSLinear, SWSConvNeuron, SWSLinearNeuron
+from modules.neurons import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, MyLIFNode
 from modules import neuron_spikingjelly
 import config
 
@@ -132,7 +132,8 @@ class OnlineSpikingVGG(nn.Module):
                     convNeuron = SWSConvNeuron(in_channels, v, kernel_size=3, padding=1, stride=stride, neuron_class=neuron, **kwargs)
                     if BN:
                         bn = nn.BatchNorm2d(v)
-                        layers += [convNeuron, bn]
+                        # layers += [convNeuron, bn]
+                        layers += [convNeuron]
                     else:
                         layers += [convNeuron, Scale(2.74)]
                 else:

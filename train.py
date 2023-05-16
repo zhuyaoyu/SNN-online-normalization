@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 import sys
 from torch.cuda import amp
 from models import spiking_vgg, spiking_resnet_imagenet
-from modules import neuron, surrogate, neuron_spikingjelly
+from modules import layers, neurons, surrogate, neuron_spikingjelly
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 from datasets.data import get_dataset
 import config
@@ -53,21 +53,35 @@ def main():
     # TODO: LIF or PLIF? should we add this choice?
     c_in = 2 if is_dynamic(args.dataset) else 3
     if args.dataset != 'imagenet':
-        neuron0 = neuron.OnlinePLIFNode if not args.BPTT else neuron_spikingjelly.ParametricLIFNode
-        # neuron0 = neuron.OnlinePLIFNode if not args.BPTT else neuron.MyLIFNode
+        # neuron0 = neurons.OnlinePLIFNode if not args.BPTT else neuron_spikingjelly.ParametricLIFNode
+        neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
         net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS)
     else:
-        neuron0 = neuron.OnlineLIFNode if not args.BPTT else neuron_spikingjelly.LIFNode
+        neuron0 = neurons.OnlineLIFNode if not args.BPTT else neuron_spikingjelly.LIFNode
         net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, grad_with_rate=True, v_reset=None)
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
     net.cuda()
 
+    tau_param = []
+    for layer in net.modules():
+        if isinstance(layer, neuron_spikingjelly.ParametricLIFNode):
+            tau_param.append(layer.w)
+        elif isinstance(layer, (layers.SWSConvNeuron, layers.SWSLinearNeuron)):
+            neuron = layer.neuron
+            if isinstance(neuron, neurons.OnlinePLIFNode):
+                tau_param.append(neuron.w)
+
+    params = [
+        {'params': list(set(net.parameters()) - set(tau_param))},
+        {'params': tau_param, 'weight_decay': 0.},
+    ]
+
     optimizer = None
     if args.opt == 'SGD':
-        optimizer = torch.optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+        optimizer = torch.optim.SGD(params, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     elif args.opt == 'Adam':
-        optimizer = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.weight_decay)
     else:
         raise NotImplementedError(args.opt)
 

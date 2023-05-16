@@ -51,7 +51,6 @@ def parse(fname):
     for key in defaults:
         if not hasattr(args, key):
             setattr(args, key, defaults[key])
-    
     for key in require_args:
         assert(hasattr(args, key))
     args.dataset = args.dataset.lower()

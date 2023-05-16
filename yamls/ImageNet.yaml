@@ -5,7 +5,7 @@ epochs: 100
 T_max: 100
 model: "online_spiking_nfresnet34"
 weight_decay: 0.0001
-WS: "True"
+WS: True
 tau_online_level: 1
 weight_online_level: 1
 data_dir: "../../datasets/imagenet/"

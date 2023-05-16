@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 import sys
 from torch.cuda import amp
 from models import spiking_vgg, spiking_resnet_imagenet
-from modules import neuron, surrogate
+from modules import neurons, surrogate, neuron_spikingjelly
 import config
 from datasets.data import get_dataset
 import argparse
@@ -22,7 +22,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 from torchtoolbox.transform import Cutout
 
-_seed_ = 2022
+_seed_ = 2023
 import random
 random.seed(_seed_)
 
@@ -55,12 +55,14 @@ def main():
     train_data_loader = data.DataLoader(trainset, batch_size=args.b, shuffle=True, num_workers=args.j, pin_memory=True)
     test_data_loader = data.DataLoader(testset, batch_size=args.b, shuffle=False, num_workers=args.j, pin_memory=True)
 
-    # TODO: LIF or PLIF? should we add this choice?
     c_in = 2 if is_dynamic(args.dataset) else 3
     if args.dataset != 'imagenet':
-        net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron.OnlinePLIFNode, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS, detach_reset=not args.BPTT)
+        # neuron0 = neurons.OnlinePLIFNode if not args.BPTT else neuron_spikingjelly.ParametricLIFNode
+        neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
+        net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS)
     else:
-        net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron.OnlineLIFNode, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, grad_with_rate=True, v_reset=None)
+        neuron0 = neurons.OnlineLIFNode if not args.BPTT else neuron_spikingjelly.LIFNode
+        net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, grad_with_rate=True, v_reset=None)
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
     net.cuda()
@@ -130,6 +132,9 @@ def main():
                     else:
                         for i in range(len(spikes_all)):
                             spikes_all[i] = spikes_all[i] + torch.sum(torch.mean(spikes_batch[i], dim=1)).item()
+
+                if args.BPTT:
+                    net.reset_v()
 
                 test_samples += label.numel()
                 test_loss += total_loss.item() * label.numel()
