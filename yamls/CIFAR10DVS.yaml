@@ -1,0 +1,14 @@
+T: 10
+tau: 2
+b: 128
+epochs: 300
+T_max: 300
+weight_decay: 0.0005
+loss_lambda: 0.001
+drop_rate: 0.1
+WS: True
+tau_online_level: 1
+weight_online_level: 1
+data_dir: "../../datasets/cifar10_dvs/"
+dataset: "cifar10dvs"
+out_dir: "logs/cifar10dvs"

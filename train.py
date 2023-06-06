@@ -10,19 +10,18 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import sys
 from torch.cuda import amp
-from models import spiking_vgg
-from modules import neuron, surrogate
-import argparse
-import torch.utils.data as data
-import torchvision.transforms as transforms
-from datasets.augmentation import ToPILImage, Resize, Padding, RandomCrop, ToTensor, Normalize, RandomHorizontalFlip
-from datasets.dvs128_gesture import DVS128Gesture
-import math
+from models import spiking_vgg, spiking_resnet_imagenet
+from modules import layers, neurons, surrogate, neuron_spikingjelly
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
+from datasets.data import get_dataset
+import config
+import argparse
+import math
+import torch.utils.data as data
 
-_seed_ = 2022
+_seed_ = 2023
 import random
-random.seed(2022)
+random.seed(_seed_)
 
 torch.manual_seed(_seed_)  # use torch.manual_seed() to seed the RNG for all devices (both CPU and CUDA)
 torch.cuda.manual_seed_all(_seed_)
@@ -32,57 +31,58 @@ torch.backends.cudnn.benchmark = False
 import numpy as np
 np.random.seed(_seed_)
 
+def is_dynamic(dataset):
+    return dataset.lower() in ['cifar10dvs', 'dvsgesture']
 
 def main():
 
-    parser = argparse.ArgumentParser(description='Classify DVS128Gesture')
-    parser.add_argument('-T', default=20, type=int, help='simulating time-steps')
-    parser.add_argument('-tau', default=2., type=float)
-    parser.add_argument('-b', default=16, type=int, help='batch size')
-    parser.add_argument('-epochs', default=300, type=int, metavar='N',
-                        help='number of total epochs to run')
-    parser.add_argument('-j', default=4, type=int, metavar='N',
-                        help='number of data loading workers (default: 4)')
-    parser.add_argument('-data_dir', type=str, default=None)
-    parser.add_argument('-out_dir', type=str, help='root dir for saving logs and checkpoint', default='./logs')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-config', type=str, help='config .yaml file')
+    
+    cfg = parser.parse_args()
+    config.parse(cfg.config)
+    args = config.args
 
-    parser.add_argument('-resume', type=str, help='resume from the checkpoint path')
-    parser.add_argument('-amp', action='store_true', help='automatic mixed precision training')
+    # print(args)
+    # os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
 
-    parser.add_argument('-opt', type=str, help='use which optimizer. SDG or Adam', default='Adam')
-    parser.add_argument('-lr', default=0.001, type=float, help='learning rate')
-    parser.add_argument('-momentum', default=0.9, type=float, help='momentum for SGD')
-    parser.add_argument('-lr_scheduler', default='CosALR', type=str, help='use which schedule. StepLR or CosALR')
-    parser.add_argument('-step_size', default=30, type=float, help='step_size for StepLR')
-    parser.add_argument('-gamma', default=0.1, type=float, help='gamma for StepLR')
-    parser.add_argument('-T_max', default=300, type=int, help='T_max for CosineAnnealingLR')
-    parser.add_argument('-model', type=str, default='online_spiking_vgg11_ws')
-    parser.add_argument('-cnf', type=str)
-    parser.add_argument('-T_train', default=None, type=int)
-    parser.add_argument('-dts_cache', type=str, default='./dts_cache')
-    parser.add_argument('-loss_lambda', type=float, default=0.001)
-    parser.add_argument('-drop_rate', type=float, default=0.0)
-    parser.add_argument('-online_update', action='store_true')
+    num_classes, trainset, testset = get_dataset(args)
+    train_data_loader = data.DataLoader(trainset, batch_size=args.b, shuffle=True, num_workers=args.j, pin_memory=True)
+    test_data_loader = data.DataLoader(testset, batch_size=args.b, shuffle=False, num_workers=args.j, pin_memory=True)
 
-    parser.add_argument('-gpu-id', default='0', type=str, help='gpu id')
-
-    args = parser.parse_args()
-    #print(args)
-    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
-
-    net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron.OnlineLIFNode, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=2, num_classes=11, grad_with_rate=True, tau=args.tau, neuron_dropout=args.drop_rate, fc_hw=1, v_reset=None)
+    # TODO: LIF or PLIF? should we add this choice?
+    c_in = 2 if is_dynamic(args.dataset) else 3
+    print(f'args.tau = {args.tau}')
+    if args.dataset != 'imagenet':
+        # neuron0 = neurons.OnlinePLIFNode if not args.BPTT else neuron_spikingjelly.ParametricLIFNode
+        neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
+        net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS)
+    else:
+        neuron0 = neurons.OnlineLIFNode if not args.BPTT else neuron_spikingjelly.LIFNode
+        net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, grad_with_rate=True, v_reset=None)
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
     net.cuda()
 
+    tau_param = []
+    for layer in net.modules():
+        if isinstance(layer, neuron_spikingjelly.ParametricLIFNode):
+            tau_param.append(layer.w)
+        elif isinstance(layer, layers.SynapseNeuron):
+            neuron = layer.neuron
+            if isinstance(neuron, neurons.OnlinePLIFNode):
+                tau_param.append(neuron.w)
 
-
+    # params = [
+    #     {'params': list(set(net.parameters()) - set(tau_param))},
+    #     {'params': tau_param, 'weight_decay': 0.},
+    # ]
 
     optimizer = None
     if args.opt == 'SGD':
-        optimizer = torch.optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum)
+        optimizer = torch.optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     elif args.opt == 'Adam':
-        optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
+        optimizer = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     else:
         raise NotImplementedError(args.opt)
 
@@ -93,15 +93,6 @@ def main():
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.T_max)
     else:
         raise NotImplementedError(args.lr_scheduler)
-
-    num_classes = 11
-    
-    trainset = DVS128Gesture(args.data_dir, train=True, data_type='frame', frames_number=args.T, split_by='number')
-    train_data_loader = data.DataLoader(trainset, batch_size=args.b, shuffle=True, num_workers=args.j)
-    
-    testset = DVS128Gesture(args.data_dir, train=False, data_type='frame', frames_number=args.T, split_by='number')
-    test_data_loader = data.DataLoader(testset, batch_size=args.b, shuffle=False, num_workers=args.j)
-
 
     scaler = None
     if args.amp:
@@ -118,7 +109,9 @@ def main():
         start_epoch = checkpoint['epoch'] + 1
         max_test_acc = checkpoint['max_test_acc']
 
-    out_dir = os.path.join(args.out_dir, f'{args.model}_{args.cnf}_T_{args.T}_T_train_{args.T_train}_{args.opt}_lr_{args.lr}_')
+    out_dir = os.path.join(args.out_dir, f'{args.model}_{args.cnf}_T_{args.T}_T_train_{args.T_train}_{args.opt}_lr_{args.lr}_tau_{args.tau}_taulvl_{args.tau_online_level}_wlvl_{args.weight_online_level}_')
+    if args.BPTT:
+        out_dir += 'BPTT_'
     if args.lr_scheduler == 'CosALR':
         out_dir += f'CosALR_{args.T_max}'
     elif args.lr_scheduler == 'StepLR':
@@ -137,7 +130,8 @@ def main():
         print(out_dir)
         #assert args.resume is not None
 
-    pt_dir = out_dir + '_pt'
+    # pt_dir = out_dir + '_pt'
+    pt_dir = out_dir
     if not os.path.exists(pt_dir):
         os.makedirs(pt_dir)
         print(f'Mkdir {pt_dir}.')
@@ -147,7 +141,7 @@ def main():
         args_txt.write(str(args))
 
     writer = SummaryWriter(os.path.join(out_dir, 'logs'), purge_step=start_epoch)
-
+    
     criterion_mse = nn.MSELoss(reduce=True)
 
     for epoch in range(start_epoch, args.epochs):
@@ -170,9 +164,10 @@ def main():
         for frame, label in train_data_loader:
             batch_idx += 1
             frame = frame.float().cuda()
-            t_step = frame.shape[1]
+            t_step = args.T_train if args.T_train is not None else args.T
 
-            if args.T_train:
+            if args.T_train and args.T_train != args.T:
+                assert(is_dynamic(args.dataset))
                 sec_list = np.random.choice(frame.shape[1], args.T_train, replace=False)
                 sec_list.sort()
                 frame = frame[:, sec_list]
@@ -181,12 +176,16 @@ def main():
             label = label.cuda()
 
             batch_loss = 0
-            if not args.online_update:
+            if args.BPTT:
+                bptt_loss = 0
                 optimizer.zero_grad()
+            elif not args.online_update:
+                optimizer.zero_grad()
+            
             for t in range(t_step):
                 if args.online_update:
                     optimizer.zero_grad()
-                input_frame = frame[:, t]
+                input_frame = frame[:, t] if is_dynamic(args.dataset) else frame
                 if args.amp:
                     with amp.autocast():
                         if t == 0:
@@ -221,15 +220,21 @@ def main():
                         loss = ((1 - args.loss_lambda) * F.cross_entropy(out_fr, label) + args.loss_lambda * mse_loss) / t_step
                     else:
                         loss = F.cross_entropy(out_fr, label) / t_step
-                    loss.backward()
+                    if not args.BPTT:
+                        loss.backward()
+                    else:
+                        bptt_loss += loss
 
                     if args.online_update:
                         optimizer.step()
 
                 batch_loss += loss.item()
                 train_loss += loss.item() * label.numel()
-
-            if not args.online_update:
+            if args.BPTT:
+                bptt_loss.backward()
+                optimizer.step()
+                net.reset_v()
+            elif not args.online_update:
                 if args.amp:
                     scaler.step(optimizer)
                     scaler.update()
@@ -263,6 +268,7 @@ def main():
                         top5=top5.avg,
                         )
             bar.next()
+            # exit(0)
         bar.finish()
 
         train_loss /= train_samples
@@ -291,11 +297,11 @@ def main():
                 batch_idx += 1
                 frame = frame.float().cuda()
                 label = label.cuda()
-                t_step = frame.shape[1]
+                t_step = args.T
                 total_loss = 0
 
                 for t in range(t_step):
-                    input_frame = frame[:, t]
+                    input_frame = frame[:, t] if is_dynamic(args.dataset) else frame
                     if t == 0:
                         out_fr = net(input_frame, init=True)
                         total_fr = out_fr.clone().detach()
@@ -310,6 +316,8 @@ def main():
                     else:
                         loss = F.cross_entropy(out_fr, label) / t_step
                     total_loss += loss
+                if args.BPTT:
+                    net.reset_v()
 
                 test_samples += label.numel()
                 test_loss += total_loss.item() * label.numel()

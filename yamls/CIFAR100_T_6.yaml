@@ -1,0 +1,12 @@
+T: 6
+tau: 2
+b: 128
+epochs: 300
+T_max: 300
+weight_decay: 0.0005
+WS: True
+tau_online_level: 5
+weight_online_level: 4
+data_dir: "../../datasets/cifar100/"
+dataset: "cifar100"
+out_dir: "logs/cifar100"

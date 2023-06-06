@@ -10,18 +10,21 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import sys
 from torch.cuda import amp
-from models import spiking_resnet_imagenet
-from modules import neuron, surrogate
+from models import spiking_vgg, spiking_resnet_imagenet
+from modules import neurons, surrogate, neuron_spikingjelly
+import config
+from datasets.data import get_dataset
 import argparse
 import math
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 import torch.utils.data as data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+from torchtoolbox.transform import Cutout
 
-_seed_ = 2022
+_seed_ = 2023
 import random
-random.seed(2022)
+random.seed(_seed_)
 
 torch.manual_seed(_seed_)  # use torch.manual_seed() to seed the RNG for all devices (both CPU and CUDA)
 torch.cuda.manual_seed_all(_seed_)
@@ -31,60 +34,35 @@ torch.backends.cudnn.benchmark = False
 import numpy as np
 np.random.seed(_seed_)
 
+def is_dynamic(dataset):
+    return dataset.lower() in ['cifar10dvs', 'dvsgesture']
+
 def main():
 
-    parser = argparse.ArgumentParser(description='Classify ImageNet')
-    parser.add_argument('-T', default=6, type=int, help='simulating time-steps')
-    parser.add_argument('-tau', default=2., type=float)
-    parser.add_argument('-b', default=256, type=int, help='batch size')
-    parser.add_argument('-j', default=4, type=int, metavar='N',
-                        help='number of data loading workers (default: 4)')
-    parser.add_argument('-data_dir', type=str, default=None)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-config', type=str, help='config .yaml file')
+    parser.add_argument('-resume', type=str, help='model path to resume')
+    
+    cfg = parser.parse_args()
+    config.parse(cfg.config)
+    config.args.resume = cfg.resume
+    args = config.args
 
-    parser.add_argument('-resume', type=str, help='resume from the checkpoint path')
+    # print(args)
+    # os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
 
-    parser.add_argument('-model', type=str, default='online_spiking_nfresnet34')
-    parser.add_argument('-drop_rate', type=float, default=0.0)
-    parser.add_argument('-stochdepth_rate', type=float, default=0.0)
-    parser.add_argument('-weight_decay', type=float, default=2e-5)
-    parser.add_argument('-cnf', type=str)
-    parser.add_argument('-dts_cache', type=str, default='./dts_cache')
-    parser.add_argument('-loss_lambda', type=float, default=0.0)
+    num_classes, trainset, testset = get_dataset(args)
+    train_data_loader = data.DataLoader(trainset, batch_size=args.b, shuffle=True, num_workers=args.j, pin_memory=True)
+    test_data_loader = data.DataLoader(testset, batch_size=args.b, shuffle=False, num_workers=args.j, pin_memory=True)
 
-    parser.add_argument('-gpu-id', default='0', type=str, help='gpu id')
-
-    args = parser.parse_args()
-    #print(args)
-    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
-
-    num_classes = 1000
-
-    traindir = os.path.join(args.data_dir, 'train')
-    valdir = os.path.join(args.data_dir, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-
-    train_data_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(traindir, transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.b, shuffle=True,
-        num_workers=args.j, pin_memory=True)
-
-    test_data_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.b, shuffle=False,
-        num_workers=args.j, pin_memory=True)
-
-    net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron.OnlineLIFNode, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=3, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, grad_with_rate=True, v_reset=None)
+    c_in = 2 if is_dynamic(args.dataset) else 3
+    if args.dataset != 'imagenet':
+        # neuron0 = neurons.OnlinePLIFNode if not args.BPTT else neuron_spikingjelly.ParametricLIFNode
+        neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
+        net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS)
+    else:
+        neuron0 = neurons.OnlineLIFNode if not args.BPTT else neuron_spikingjelly.LIFNode
+        net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, grad_with_rate=True, v_reset=None)
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
     net.cuda()
@@ -93,6 +71,10 @@ def main():
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
         net.load_state_dict(checkpoint['net'])
+        #optimizer.load_state_dict(checkpoint['optimizer'])
+        #lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        #start_epoch = checkpoint['epoch'] + 1
+        #max_test_acc = checkpoint['max_test_acc']
 
     criterion_mse = nn.MSELoss(reduce=True)
 
@@ -124,7 +106,8 @@ def main():
                 total_loss = 0
 
                 for t in range(t_step):
-                    input_frame = frame
+                    input_frame = frame[:, t] if is_dynamic(args.dataset) else frame
+                    # print(input_frame.shape, is_dynamic(args.dataset))
                     if t == 0:
                         out_fr = net(input_frame, init=True, save_spike=True)
                         total_fr = out_fr.clone().detach()
@@ -149,6 +132,9 @@ def main():
                     else:
                         for i in range(len(spikes_all)):
                             spikes_all[i] = spikes_all[i] + torch.sum(torch.mean(spikes_batch[i], dim=1)).item()
+
+                if args.BPTT:
+                    net.reset_v()
 
                 test_samples += label.numel()
                 test_loss += total_loss.item() * label.numel()
@@ -191,6 +177,7 @@ def main():
         total_rate /= total_dim
 
         total_time = time.time() - start_time
+
         print(f'test_loss={test_loss}, test_acc={test_acc}, total_time={total_time}')
         for i in range(len(spikes_all)):
             print(f'layer={i+1}, spike_rate={spikes_all[i]}')

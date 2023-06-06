@@ -1,7 +1,10 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Function
-from modules.layer import ScaledWSConv2d, ScaledWSLinear, SWSConvNeuron, SWSLinearNeuron
+from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron, MyBN
+from modules.neurons import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, MyLIFNode
+from modules import neuron_spikingjelly
+import config
 
 __all__ = [
     'OnlineSpikingVGG', 'online_spiking_vgg11', 'online_spiking_vgg11_ws', 'online_spiking_vgg11f_ws',
@@ -18,19 +21,22 @@ class SequentialModule(nn.Sequential):
 
     def forward(self, input, **kwargs):
         for module in self._modules.values():
-            if isinstance(module, self.single_step_neuron) or isinstance(module, SWSLinearNeuron) or isinstance(module, SWSConvNeuron):
+            if isinstance(module, (OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, SynapseNeuron)):
                 input = module(input, **kwargs)
             else:
-                input = module(input)
+                if isinstance(module, neuron_spikingjelly.BaseNode):
+                    input = module.single_step_forward(input)
+                else:
+                    input = module(input)
         return input
 
-    def get_spike(self):
-        spikes = []
-        for module in self._modules.values():
-            if isinstance(module, self.single_step_neuron):
-                spike = module.spike.cpu()
-                spikes.append(spike.reshape(spike.shape[0], -1))
-        return spikes
+    # def get_spike(self):
+    #     spikes = []
+    #     for module in self._modules.values():
+    #         if isinstance(module, self.single_step_neuron):
+    #             spike = module.spike.cpu()
+    #             spikes.append(spike.reshape(spike.shape[0], -1))
+    #     return spikes
 
 
 class Scale(nn.Module):
@@ -61,25 +67,34 @@ class OnlineSpikingVGG(nn.Module):
                 nn.Linear(512*(self.fc_hw**2), num_classes),
             )
         else:
-            self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
+            self.avgpool = nn.AdaptiveAvgPool2d((self.fc_hw, self.fc_hw))
+            linear_dim = min(4096, self.self.fc_hw ** 2)
             self.classifier = SequentialModule(
                 single_step_neuron,
-                SWSLinearNeuron(512 * 7 * 7, 4096, neuron=single_step_neuron(), **kwargs),
+                SynapseNeuron(synapse=nn.Linear(512 * self.fc_hw ** 2, linear_dim, bias=True), neuron_class=single_step_neuron, **kwargs),
                 Scale(2.74),
                 nn.Dropout(),
-                SWSLinearNeuron(4096, 4096, neuron=single_step_neuron(), **kwargs),
+                SynapseNeuron(synapse=nn.Linear(linear_dim, linear_dim, bias=True), neuron_class=single_step_neuron, **kwargs),
                 Scale(2.74),
                 nn.Dropout(),
-                nn.Linear(4096, num_classes),
+                nn.Linear(linear_dim, num_classes),
             )
         if init_weights:
             self._initialize_weights()
+    
+    def reset_v(self):
+        for module in self.features._modules.values():
+            if isinstance(module, neuron_spikingjelly.BaseNode):
+                module.v = 0.
+        for module in self.classifier._modules.values():
+            if isinstance(module, neuron_spikingjelly.BaseNode):
+                module.v = 0.
 
     def forward(self, x, **kwargs):
-        x = self.features(x, require_wrap=False, **kwargs)
+        x = self.features(x, **kwargs)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.classifier(x, require_wrap=False, **kwargs)
+        x = self.classifier(x, **kwargs)
         return x
 
     def _initialize_weights(self):
@@ -113,17 +128,36 @@ class OnlineSpikingVGG(nn.Module):
                 else:
                     stride = 1
                 # neuron = OnlineLIFNode(tau = 2., surrogate_function = surrogate.Sigmoid(), dropout = 0.0)
-                convNeuron = SWSConvNeuron(in_channels, v, kernel_size=3, padding=1, stride=stride, neuron=neuron(), **kwargs)
-                if BN:
-                    bn = nn.BatchNorm2d(v)
-                    layers += [convNeuron, bn]
+                if not config.args.BPTT:
+                    conv = nn.Conv2d(in_channels, v, kernel_size=3, padding=1, stride=stride, bias=True)
+                    convNeuron = SynapseNeuron(conv, neuron_class=neuron, v_reset=None, **kwargs)
+                    if BN:
+                        bn = nn.BatchNorm2d(v)
+                        # layers += [convNeuron, bn]
+                        layers += [convNeuron]
+                    else:
+                        layers += [convNeuron, Scale(2.74)]
                 else:
-                    layers += [convNeuron, Scale(2.74)]
+                    conv2d = ScaledWSConv2d(in_channels, v, kernel_size=3, padding=1, stride=stride)
+                    if BN:
+                        # bn = nn.BatchNorm2d(v)
+                        bn = MyBN(v)
+                        layers += [conv2d, bn, neuron(decay_input = False, v_reset = 0., tau=kwargs.get('tau', 2.0))]
+                    else:
+                        layers += [conv2d, neuron(decay_input = False, v_reset = 0., tau=kwargs.get('tau', 2.0)), Scale(2.74)]
                 in_channels = v
         return SequentialModule(neuron, *layers)
 
     def get_spike(self):
-        return self.features.get_spike()
+        spikes = []
+        for module in self.features._modules.values():
+            if isinstance(module, self.single_step_neuron):
+                spike = module.spike.cpu()
+                spikes.append(spike.reshape(spike.shape[0], -1))
+            if isinstance(module, SynapseNeuron):
+                spike = module.neuron.spike.cpu()
+                spikes.append(spike.reshape(spike.shape[0], -1))
+        return spikes
 
 
 
@@ -150,192 +184,3 @@ def online_spiking_vgg11(pretrained=False, progress=True, single_step_neuron: ca
 def online_spiking_vgg11_ws(pretrained=False, progress=True, single_step_neuron: callable = None, weight_standardization=True, **kwargs):
     return _spiking_vgg('vgg11', 'A', weight_standardization, pretrained, progress, single_step_neuron, **kwargs)
 
-
-'''
-class OnlineSpikingVGGF(nn.Module):
-
-    def __init__(self, cfg, weight_standardization=True, num_classes=1000, init_weights=True,
-                 single_step_neuron: callable = None, light_classifier=True, BN=False, **kwargs):
-        super(OnlineSpikingVGGF, self).__init__()
-        self.single_step_neuron = single_step_neuron
-        self.grad_with_rate = kwargs.get('grad_with_rate', False)
-        self.fc_hw = kwargs.get('fc_hw', 3)
-        self.conv1, self.features = self.make_layers(cfg=cfg, weight_standardization=weight_standardization,
-                                         neuron=single_step_neuron, BN=BN, **kwargs)
-
-        # feedback connections
-        scale_factor = 1
-        for v in cfg:
-            if v == 'M' or v == 'S':
-                scale_factor *= 2
-        self.up = nn.Upsample(scale_factor=scale_factor, mode='nearest')
-        # TODO consider general cfg settings
-        self.fb_conv = nn.Conv2d(cfg[-1], cfg[0], kernel_size=3, padding=1, stride=1)
-        if self.grad_with_rate:
-            self.fb_conv = WrapedSNNOp(self.fb_conv)
-
-
-        if light_classifier:
-            self.avgpool = nn.AdaptiveAvgPool2d((self.fc_hw, self.fc_hw))
-            if self.grad_with_rate:
-                self.classifier = SequentialModule(
-                    single_step_neuron, # not in the module, but parameter
-                    WrapedSNNOp(nn.Linear(512*(self.fc_hw**2), num_classes)),
-                )
-            else:
-                self.classifier = SequentialModule(
-                    single_step_neuron, # not in the module, but parameter
-                    nn.Linear(512*(self.fc_hw**2), num_classes),
-                )
-        else:
-            self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
-            if self.grad_with_rate:
-                self.classifier = SequentialModule(
-                    single_step_neuron,
-                    WrapedSNNOp(ScaledWSLinear(512 * 7 * 7, 4096)),
-                    single_step_neuron(**kwargs, neuron_dropout=0.0),
-                    Scale(2.74),
-                    nn.Dropout(),
-                    WrapedSNNOp(ScaledWSLinear(4096, 4096)),
-                    single_step_neuron(**kwargs, neuron_dropout=0.0),
-                    Scale(2.74),
-                    nn.Dropout(),
-                    WrapedSNNOp(nn.Linear(4096, num_classes)),
-                )
-            else:
-                self.classifier = SequentialModule(
-                    single_step_neuron,
-                    ScaledWSLinear(512 * 7 * 7, 4096),
-                    single_step_neuron(**kwargs, neuron_dropout=0.0),
-                    Scale(2.74),
-                    nn.Dropout(),
-                    ScaledWSLinear(4096, 4096),
-                    single_step_neuron(**kwargs, neuron_dropout=0.0),
-                    Scale(2.74),
-                    nn.Dropout(),
-                    nn.Linear(4096, num_classes),
-                )
-        if init_weights:
-            self._initialize_weights()
-
-    def forward(self, x, **kwargs):
-        require_wrap = self.grad_with_rate and self.training
-        init = kwargs.get('init', False)
-        if require_wrap:
-            if init:
-                x = self.conv1(x)
-            else:
-                x = self.conv1(x) + self.fb_conv(self.up(self.fb_features), require_wrap=True)
-            x = self.features(x, output_type='spike_rate', require_wrap=True, **kwargs)
-
-            self.fb_features = x.clone().detach()
-
-            x = self.avgpool(x)
-            x = torch.flatten(x, 1)
-            x = self.classifier(x, output_type='spike_rate', require_wrap=True, **kwargs)
-        else:
-            if init:
-                x = self.conv1(x)
-            else:
-                if self.grad_with_rate:
-                    x = self.conv1(x) + self.fb_conv(self.up(self.fb_features), require_wrap=False)
-                else:
-                    x = self.conv1(x) + self.fb_conv(self.up(self.fb_features))
-            x = self.features(x, require_wrap=False, **kwargs)
-
-            self.fb_features = x.clone().detach()
-
-            x = self.avgpool(x)
-            x = torch.flatten(x, 1)
-            x = self.classifier(x, require_wrap=False, **kwargs)
-        return x
-
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, ScaledWSConv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                #nn.init.constant_(m.weight, 0)
-                nn.init.constant_(m.bias, 0)
-        # zero initialization for fb conv
-        if self.grad_with_rate:
-            nn.init.constant_(self.fb_conv.op.weight, 0.)
-        else:
-            nn.init.constant_(self.fb_conv.weight, 0.)
-
-    @staticmethod
-    def make_layers(cfg, weight_standardization=True, neuron: callable = None, BN=False, **kwargs):
-        grad_with_rate = kwargs.get('grad_with_rate', False)
-        layers = []
-        in_channels = kwargs.get('c_in', 3)
-        first_conv = True
-        use_stride_2 = False
-        for v in cfg:
-            if v == 'M':
-                #layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
-                layers += [nn.AvgPool2d(kernel_size=2, stride=2)]
-            elif v == 'S':
-                use_stride_2 = True
-            else:
-                if use_stride_2:
-                    stride = 2
-                    use_stride_2 = False
-                else:
-                    stride = 1
-                if weight_standardization:
-                    if first_conv:
-                        conv1 = ScaledWSConv2d(in_channels, v, kernel_size=3, padding=1, stride=stride)
-                        first_conv = False
-                        layers += [neuron(**kwargs), Scale(2.74)]
-                    else:
-                        if grad_with_rate:
-                            conv2d = WrapedSNNOp(ScaledWSConv2d(in_channels, v, kernel_size=3, padding=1, stride=stride))
-                        else:
-                            conv2d = ScaledWSConv2d(in_channels, v, kernel_size=3, padding=1, stride=stride)
-                        layers += [conv2d, neuron(**kwargs), Scale(2.74)]
-                else:
-                    if first_conv:
-                        conv1 = nn.Conv2d(in_channels, v, kernel_size=3, padding=1, stride=stride)
-                        first_conv = False
-                        if BN:
-                            bn = nn.BatchNorm2d(v)
-                            layers += [bn, neuron(**kwargs)]
-                        else:
-                            layers += [neuron(**kwargs), Scale(2.74)]
-                    else:
-                        if grad_with_rate:
-                            conv2d = WrapedSNNOp(nn.Conv2d(in_channels, v, kernel_size=3, padding=1, stride=stride))
-                        else:
-                            conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1, stride=stride)
-                        if BN:
-                            bn = nn.BatchNorm2d(v)
-                            layers += [conv2d, bn, neuron(**kwargs)]
-                        else:
-                            layers += [conv2d, neuron(**kwargs), Scale(2.74)]
-                in_channels = v
-        return conv1, SequentialModule(neuron, *layers)
-
-    def get_spike(self):
-        return self.features.get_spike()
-
-
-def _spiking_vggf(arch, cfg, weight_standardization, pretrained, progress, single_step_neuron: callable = None, **kwargs):
-    if pretrained:
-        kwargs['init_weights'] = False
-    model = OnlineSpikingVGGF(cfg=cfgs[cfg], weight_standardization=weight_standardization, single_step_neuron=single_step_neuron, **kwargs)
-    if pretrained:
-        state_dict = load_state_dict_from_url(model_urls[arch],
-                                              progress=progress)
-        model.load_state_dict(state_dict)
-    return model
-
-
-def online_spiking_vgg11f_ws(pretrained=False, progress=True, single_step_neuron: callable = None, **kwargs):
-    return _spiking_vggf('vgg11', 'A', True, pretrained, progress, single_step_neuron, **kwargs)
-'''
