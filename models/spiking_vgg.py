@@ -1,11 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Function
-<<<<<<< HEAD
 from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron, MyBN
-=======
-from modules.layers import ScaledWSConv2d, ScaledWSLinear, SWSConvNeuron, SWSLinearNeuron
->>>>>>> c0679f4bbff3f031b18a308bc3d00007a98e9800
 from modules.neurons import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, MyLIFNode
 from modules import neuron_spikingjelly
 import config
