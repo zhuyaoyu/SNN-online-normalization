@@ -1,7 +1,11 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Function
+<<<<<<< HEAD
 from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron, MyBN
+=======
+from modules.layers import ScaledWSConv2d, ScaledWSLinear, SWSConvNeuron, SWSLinearNeuron
+>>>>>>> c0679f4bbff3f031b18a308bc3d00007a98e9800
 from modules.neurons import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, MyLIFNode
 from modules import neuron_spikingjelly
 import config
@@ -28,8 +32,20 @@ class SequentialModule(nn.Sequential):
                     input = module.single_step_forward(input)
                 else:
                     input = module(input)
+            else:
+                if isinstance(module, neuron_spikingjelly.BaseNode):
+                    input = module.single_step_forward(input)
+                else:
+                    input = module(input)
         return input
 
+    # def get_spike(self):
+    #     spikes = []
+    #     for module in self._modules.values():
+    #         if isinstance(module, self.single_step_neuron):
+    #             spike = module.spike.cpu()
+    #             spikes.append(spike.reshape(spike.shape[0], -1))
+    #     return spikes
     # def get_spike(self):
     #     spikes = []
     #     for module in self._modules.values():
@@ -69,6 +85,8 @@ class OnlineSpikingVGG(nn.Module):
         else:
             self.avgpool = nn.AdaptiveAvgPool2d((self.fc_hw, self.fc_hw))
             linear_dim = min(4096, self.self.fc_hw ** 2)
+            self.avgpool = nn.AdaptiveAvgPool2d((self.fc_hw, self.fc_hw))
+            linear_dim = min(4096, self.self.fc_hw ** 2)
             self.classifier = SequentialModule(
                 single_step_neuron,
                 SynapseNeuron(synapse=nn.Linear(512 * self.fc_hw ** 2, linear_dim, bias=True), neuron_class=single_step_neuron, **kwargs),
@@ -77,6 +95,7 @@ class OnlineSpikingVGG(nn.Module):
                 SynapseNeuron(synapse=nn.Linear(linear_dim, linear_dim, bias=True), neuron_class=single_step_neuron, **kwargs),
                 Scale(2.74),
                 nn.Dropout(),
+                nn.Linear(linear_dim, num_classes),
                 nn.Linear(linear_dim, num_classes),
             )
         if init_weights:
@@ -90,10 +109,21 @@ class OnlineSpikingVGG(nn.Module):
             if isinstance(module, neuron_spikingjelly.BaseNode):
                 module.v = 0.
 
+    
+    def reset_v(self):
+        for module in self.features._modules.values():
+            if isinstance(module, neuron_spikingjelly.BaseNode):
+                module.v = 0.
+        for module in self.classifier._modules.values():
+            if isinstance(module, neuron_spikingjelly.BaseNode):
+                module.v = 0.
+
     def forward(self, x, **kwargs):
+        x = self.features(x, **kwargs)
         x = self.features(x, **kwargs)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
+        x = self.classifier(x, **kwargs)
         x = self.classifier(x, **kwargs)
         return x
 
