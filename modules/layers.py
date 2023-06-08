@@ -49,11 +49,24 @@ def get_mul(decay, s_out, v, dsdu):
     return res
 
 
-def neuron_forward(layer, x):
+def neuron_forward(layer, x, gamma, beta):
     neuron = layer.neuron
     v_last = neuron.v
     neuron.v_float_to_tensor(x)
     neuron.neuronal_charge(x)
+    
+    if config.args.BN:
+        unnormed_v = neuron.v
+        if layer.training:
+            # layer.run_mean, layer.run_var = layer.run_mean.to(x), layer.run_var.to(x)
+            neuron.v, mean, var = bn_forward(neuron.v, gamma, beta, layer)
+        else:
+            neuron.v = (neuron.v - layer.run_mean) / torch.sqrt(layer.run_var + 1e-4)
+            neuron.v = neuron.v * gamma + beta
+            mean, var = None, None
+        a1 = gamma / torch.sqrt(layer.run_var + 1e-4)
+        a0 = beta - layer.run_mean * a1
+    
     s_out = neuron.neuronal_fire()
     dsdu = neuron.surrogate_function.backward(torch.ones_like(s_out), neuron.v - neuron.v_threshold, neuron.surrogate_function.alpha)
     
@@ -77,11 +90,16 @@ def neuron_forward(layer, x):
             raise ValueError('Online level of tau out of range! (range: 1~5 integer)')
     
     # subtraction reset may be too strong
-    neuron.neuronal_reset(s_out)
+    if config.args.BN:
+        neuron.v = unnormed_v
+        neuron.v = neuron.v - s_out * (neuron.v_threshold - a0) / a1
+    else:
+        neuron.neuronal_reset(s_out)
+
     if neuron.dropout > 0.0 and neuron.training:
         s_out = neuron.mask.expand_as(s_out) * s_out
     neuron.spike = s_out
-    return s_out, dsdu
+    return s_out, dsdu, unnormed_v, mean, var
 
 
 @torch.jit.script
@@ -220,17 +238,7 @@ class OnlineFunc(torch.autograd.Function):
         else:
             x = F.linear(s_in, weight, bias)
         
-        if config.args.BN:
-            unnormed_x = x
-            if layer.training:
-                # layer.run_mean, layer.run_var = layer.run_mean.to(x), layer.run_var.to(x)
-                x, mean, var = bn_forward(x, gamma, beta, layer)
-            else:
-                x = (x - layer.run_mean) / torch.sqrt(layer.run_var + 1e-4)
-                x = x * gamma + beta
-                mean, var = None, None
-        
-        s_out, dsdu = neuron_forward(layer, x)
+        s_out, dsdu, unnormed_x, mean, var = neuron_forward(layer, x, gamma, beta)
 
         ctx.layer = layer
         ctx.type = type
@@ -274,8 +282,8 @@ class OnlineFunc(torch.autograd.Function):
 
         if config.args.weight_online_level >= 2:
             layer.mul_acc = 1 + layer.mul_acc * get_mul(neuron.decay, None, None, None)
-            grad_gamma *= layer.mul_acc
-            grad_beta *= layer.mul_acc
+            # grad_gamma *= layer.mul_acc
+            # grad_beta *= layer.mul_acc
             grad_b *= layer.mul_acc.reshape(-1)
 
         return None, grad_input, grad_weight, grad_b, grad_decay, grad_gamma, grad_beta, None, None
