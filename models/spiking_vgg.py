@@ -37,13 +37,6 @@ class SequentialModule(nn.Sequential):
     #             spike = module.spike.cpu()
     #             spikes.append(spike.reshape(spike.shape[0], -1))
     #     return spikes
-    # def get_spike(self):
-    #     spikes = []
-    #     for module in self._modules.values():
-    #         if isinstance(module, self.single_step_neuron):
-    #             spike = module.spike.cpu()
-    #             spikes.append(spike.reshape(spike.shape[0], -1))
-    #     return spikes
 
 
 class Scale(nn.Module):
@@ -88,14 +81,6 @@ class OnlineSpikingVGG(nn.Module):
             )
         if init_weights:
             self._initialize_weights()
-    
-    def reset_v(self):
-        for module in self.features._modules.values():
-            if isinstance(module, neuron_spikingjelly.BaseNode):
-                module.v = 0.
-        for module in self.classifier._modules.values():
-            if isinstance(module, neuron_spikingjelly.BaseNode):
-                module.v = 0.
 
     
     def reset_v(self):
