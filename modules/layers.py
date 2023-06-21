@@ -55,17 +55,16 @@ def neuron_forward(layer, x, gamma, beta):
     neuron.v_float_to_tensor(x)
     neuron.neuronal_charge(x)
     
-    if config.args.BN:
-        unnormed_v = neuron.v
-        if layer.training:
-            # layer.run_mean, layer.run_var = layer.run_mean.to(x), layer.run_var.to(x)
-            neuron.v, mean, var = bn_forward(neuron.v, gamma, beta, layer)
-        else:
-            neuron.v = (neuron.v - layer.run_mean) / torch.sqrt(layer.run_var + 1e-4)
-            neuron.v = neuron.v * gamma + beta
-            mean, var = None, None
-        a1 = gamma / torch.sqrt(layer.run_var + 1e-4)
-        a0 = beta - layer.run_mean * a1
+    # unnormed_v = neuron.v
+    # if config.args.BN:
+    #     if layer.training:
+    #         neuron.v, mean, var = bn_forward(neuron.v, gamma, beta, layer)
+    #     else:
+    #         neuron.v = (neuron.v - layer.run_mean) / torch.sqrt(layer.run_var + 1e-4)
+    #         neuron.v = neuron.v * gamma + beta
+    #         mean, var = None, None
+    #     a1 = gamma / torch.sqrt(layer.run_var + 1e-4)
+    #     a0 = beta - layer.run_mean * a1
     
     s_out = neuron.neuronal_fire()
     dsdu = neuron.surrogate_function.backward(torch.ones_like(s_out), neuron.v - neuron.v_threshold, neuron.surrogate_function.alpha)
@@ -90,8 +89,8 @@ def neuron_forward(layer, x, gamma, beta):
             raise ValueError('Online level of tau out of range! (range: 1~5 integer)')
     
     # subtraction reset may be too strong
-    if config.args.BN:
-        neuron.v = unnormed_v
+    # neuron.v = unnormed_v
+    if 0:#config.args.BN:
         neuron.v = neuron.v - s_out * (neuron.v_threshold - a0) / a1
     else:
         neuron.neuronal_reset(s_out)
@@ -99,7 +98,8 @@ def neuron_forward(layer, x, gamma, beta):
     if neuron.dropout > 0.0 and neuron.training:
         s_out = neuron.mask.expand_as(s_out) * s_out
     neuron.spike = s_out
-    return s_out, dsdu, unnormed_v, mean, var
+    # return s_out, dsdu, unnormed_v, mean, var
+    return s_out, dsdu
 
 
 @torch.jit.script
@@ -238,7 +238,16 @@ class OnlineFunc(torch.autograd.Function):
         else:
             x = F.linear(s_in, weight, bias)
         
-        s_out, dsdu, unnormed_x, mean, var = neuron_forward(layer, x, gamma, beta)
+        if config.args.BN:
+            unnormed_x = x
+            if layer.training:
+                x, mean, var = bn_forward(x, gamma, beta, layer)
+            else:
+                x = (x - layer.run_mean) / torch.sqrt(layer.run_var + 1e-4)
+                x = x * gamma + beta
+                mean, var = None, None
+        s_out, dsdu = neuron_forward(layer, x, gamma, beta)
+        # s_out, dsdu, unnormed_x, mean, var = neuron_forward(layer, x, gamma, beta)
 
         ctx.layer = layer
         ctx.type = type
@@ -247,7 +256,7 @@ class OnlineFunc(torch.autograd.Function):
         else:
             ctx.save_for_backward(s_in, weight, s_out, dsdu)
         return s_out
-    
+
     @staticmethod
     def backward(ctx, grad):
         # shape of grad: B*C*H*W
@@ -257,7 +266,7 @@ class OnlineFunc(torch.autograd.Function):
             (s_in, weight, s_out, dsdu, x, gamma, mean, var) = ctx.saved_tensors
         else:
             (s_in, weight, s_out, dsdu) = ctx.saved_tensors
-        
+
         grad_u = grad * dsdu
         if isinstance(neuron, OnlinePLIFNode):
             # grad_decay = torch.sum(grad_u * neuron.decay_acc, dim=[0,2,3], keepdim=True)
@@ -300,27 +309,24 @@ def bn_forward(x, gamma, beta, layer):
             layer.total_mean = 0.
             layer.total_var = 0.
 
-            mean = torch.mean(x, dim=dims, keepdim=True)
-            # var = torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
-            var = torch.mean((x-mean)**2, dim=dims, keepdim=True)
+        mean = torch.mean(x, dim=dims, keepdim=True)
+        var = torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
+        # var = torch.mean((x-mean)**2, dim=dims, keepdim=True)
 
-            if torch.mean(layer.run_var) < torch.mean(var) / 2:
-                layer.run_var += - layer.run_var + var
-        else:
-            mean = torch.mean(x, dim=dims, keepdim=True)
-            # var = torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
-            var = torch.mean((x-mean)**2, dim=dims, keepdim=True)
+        if layer.init and torch.mean(layer.run_var) < torch.mean(var) / 2:
+            layer.run_var += - layer.run_var + var
+
         layer.total_mean += mean
         layer.total_var += var
 
-    # x = (x - layer.run_mean) / torch.sqrt(layer.run_var + 1e-4) * gamma + beta
-    x = (x - mean) / torch.sqrt(var + 1e-4) * gamma + beta
+    x = (x - layer.run_mean) / torch.sqrt(layer.run_var + 1e-4) * gamma + beta
+    # x = (x - mean) / torch.sqrt(var + 1e-4) * gamma + beta
     return x, mean, var
 
 
 @torch.jit.script
 def bn_backward(grad_x, x, gamma, mean, var, var1):
-    # gamma = gamma * var / var1
+    gamma = gamma * var / var1
 
     dims = [0] if len(x.shape) == 2 else [0,2,3]
     std_inv = 1 / torch.sqrt(var + 1e-4)
