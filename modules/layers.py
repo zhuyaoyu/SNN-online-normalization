@@ -127,6 +127,7 @@ def get_inputs(s_in, s_in_acc, decay, v, s_out, dsdu, lvl):
 
 def calc_grad_w(grad_w_func, grad_u, s_in, s_in_acc, decay, v, s_out, dsdu, lvl):
     inputs = get_inputs(s_in, s_in_acc, decay, v, s_out, dsdu, torch.tensor(lvl))
+    # might change code here??
     grad_weight = grad_w_func(grad_u, inputs)
     return grad_weight
 
@@ -156,7 +157,7 @@ class ScaledWSConv2d(nn.Conv2d):
 
 
 class SynapseNeuron(nn.Module):
-    def __init__(self, synapse=None, gain=True, eps=1e-4, neuron_class=OnlineLIFNode, **kwargs):
+    def __init__(self, synapse=None, neuron_class=OnlineLIFNode, **kwargs):
         super().__init__()
         self.synapse = synapse
         if isinstance(synapse, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
@@ -168,8 +169,6 @@ class SynapseNeuron(nn.Module):
         else:
             raise NotImplementedError(f'Synapse type {type(synapse)} not supported!')
         
-        self.gain = nn.Parameter(torch.ones(*shape).transpose(0,1)) if gain else None
-        self.eps = eps
         if config.args.BN:
             self.gamma = nn.Parameter(torch.ones(*shape))
             self.beta = nn.Parameter(torch.zeros(*shape))
@@ -180,8 +179,8 @@ class SynapseNeuron(nn.Module):
             self.mul_acc = torch.ones(*shape).cuda()
 
             # for estimating total mean and var
-            self.total_mean = torch.ones(*shape).cuda()
-            self.total_var = torch.ones(*shape).cuda()
+            self.total_mean = torch.zeros(*shape).cuda()
+            self.total_var = torch.zeros(*shape).cuda()
 
         if neuron_class == OnlineLIFNode:
             self.neuron = neuron_class(**kwargs)
@@ -217,7 +216,7 @@ class SynapseNeuron(nn.Module):
             self.s_in_acc = torch.zeros_like(spike, requires_grad=False)
             self.mul_acc = torch.ones_like(self.mul_acc)
 
-        weight = get_weight_sws(syn.weight, syn.gain, self.eps) if config.args.WS else syn.weight
+        weight = get_weight_sws(syn.weight, syn.gain, syn.eps) if config.args.WS else syn.weight
         
         self.neuron.get_decay_coef()
         if self.type == 'conv':
@@ -250,7 +249,6 @@ class OnlineFunc(torch.autograd.Function):
         # s_out, dsdu, unnormed_x, mean, var = neuron_forward(layer, x, gamma, beta)
 
         ctx.layer = layer
-        ctx.type = type
         if config.args.BN and layer.training:
             ctx.save_for_backward(s_in, weight, s_out, dsdu, unnormed_x, gamma, mean, var)
         else:
@@ -280,7 +278,7 @@ class OnlineFunc(torch.autograd.Function):
             grad_I, grad_gamma, grad_beta = grad_u, None, None
         grad_b = torch.sum(grad_I, dim=[i for i in range(len(grad_u.shape)) if i != 1], keepdim=False)
 
-        if ctx.type == 'conv':
+        if layer.type == 'conv':
             stride, padding, dilation, groups = ctx.convConfig
             grad_input = conv_backward_input(grad_I, s_in, weight, padding, stride, dilation, groups)
             grad_w_func = lambda grad_output, input: conv_backward_weight(grad_output, input, weight, padding, stride, dilation, groups)
@@ -310,10 +308,10 @@ def bn_forward(x, gamma, beta, layer):
             layer.total_var = 0.
 
         mean = torch.mean(x, dim=dims, keepdim=True)
-        var = torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
-        # var = torch.mean((x-mean)**2, dim=dims, keepdim=True)
+        # # var = torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
+        var = torch.mean((x-mean)**2, dim=dims, keepdim=True)
 
-        if layer.init and torch.mean(layer.run_var) < torch.mean(var) / 2:
+        if layer.init and torch.mean(layer.run_var) < torch.mean(var) / 10:
             layer.run_var += - layer.run_var + var
 
         layer.total_mean += mean

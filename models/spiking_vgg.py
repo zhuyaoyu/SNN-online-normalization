@@ -81,7 +81,6 @@ class OnlineSpikingVGG(nn.Module):
             )
         if init_weights:
             self._initialize_weights()
-
     
     def reset_v(self):
         for module in self.features._modules.values():
