@@ -173,14 +173,14 @@ class SynapseNeuron(nn.Module):
             self.gamma = nn.Parameter(torch.ones(*shape))
             self.beta = nn.Parameter(torch.zeros(*shape))
             self.run_mean = nn.Parameter(torch.zeros(*shape), requires_grad=False)
-            self.run_var = nn.Parameter(torch.zeros(*shape), requires_grad=False)
+            self.run_var = nn.Parameter(torch.ones(*shape), requires_grad=False)
             self.count = 0
             self.last_training = False
             self.mul_acc = torch.ones(*shape).cuda()
 
             # for estimating total mean and var
-            self.total_mean = torch.ones(*shape).cuda()
-            self.total_var = torch.ones(*shape).cuda()
+            self.total_mean = torch.zeros(*shape).cuda()
+            self.total_var = torch.zeros(*shape).cuda()
 
         if neuron_class == OnlineLIFNode:
             self.neuron = neuron_class(**kwargs)
@@ -314,8 +314,8 @@ def bn_forward(x, gamma, beta, layer):
         #     layer.run_var += - layer.run_var + var
 
         layer.total_mean += mean
-        # layer.total_var += var
-        layer.total_var += torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
+        layer.total_var += var
+        # layer.total_var += torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
 
     x = (x - layer.run_mean) / torch.sqrt(layer.run_var + 1e-4) * gamma + beta
     # x = (x - mean) / torch.sqrt(var + 1e-4) * gamma + beta
