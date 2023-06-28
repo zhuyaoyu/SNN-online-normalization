@@ -220,18 +220,18 @@ class SynapseNeuron(nn.Module):
         
         self.neuron.get_decay_coef()
         if self.type == 'conv':
-            spike = OnlineFunc.apply('conv', spike, weight, syn.bias, self.neuron.decay, self.gamma, self.beta, (syn.stride, syn.padding, syn.dilation, syn.groups), self)
+            spike = OnlineFunc.apply(spike, weight, syn.bias, self.neuron.decay, self.gamma, self.beta, (syn.stride, syn.padding, syn.dilation, syn.groups), self)
         else:
-            spike = OnlineFunc.apply('linear', spike, weight, syn.bias, self.neuron.decay, self.gamma, self.beta, None, self)
+            spike = OnlineFunc.apply(spike, weight, syn.bias, self.neuron.decay, self.gamma, self.beta, None, self)
         self.init = False
         return spike
 
 
 class OnlineFunc(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, type, s_in, weight, bias, decay, gamma, beta, convConfig, layer):
+    def forward(ctx, s_in, weight, bias, decay, gamma, beta, convConfig, layer):
         # need du/du (decay), du/ds (reset) and ds/du (surrogate)
-        if type == 'conv':
+        if layer.type == 'conv':
             x = F.conv2d(s_in, weight, bias, *convConfig)
             ctx.convConfig = convConfig
         else:
@@ -273,9 +273,9 @@ class OnlineFunc(torch.autograd.Function):
             grad_decay = None
 
         if config.args.BN:
-            grad_I, grad_gamma, grad_beta = bn_backward(grad_u, x, gamma, mean, var, layer.run_var)
+            grad_w_, grad_I, grad_gamma, grad_beta = bn_backward(grad_u, x, gamma, mean, var, layer.run_var)
         else:
-            grad_I, grad_gamma, grad_beta = grad_u, None, None
+            grad_w_, grad_I, grad_gamma, grad_beta = grad_u, grad_u, None, None
         grad_b = torch.sum(grad_I, dim=[i for i in range(len(grad_u.shape)) if i != 1], keepdim=False)
 
         if layer.type == 'conv':
@@ -285,15 +285,16 @@ class OnlineFunc(torch.autograd.Function):
         else:
             grad_input = torch.matmul(grad_I, weight)
             grad_w_func = lambda grad_output, input: torch.matmul(grad_output.transpose(1,2), input)
-        grad_weight = calc_grad_w(grad_w_func, grad_I, s_in, layer.s_in_acc, neuron.decay, neuron.v, s_out, dsdu, config.args.weight_online_level)
+        # grad_weight = calc_grad_w(grad_w_func, grad_I, s_in, layer.s_in_acc, neuron.decay, neuron.v, s_out, dsdu, config.args.weight_online_level)
+        grad_weight = calc_grad_w(grad_w_func, grad_w_, s_in, layer.s_in_acc, neuron.decay, neuron.v, s_out, dsdu, config.args.weight_online_level)
 
         if config.args.weight_online_level >= 2:
             layer.mul_acc = 1 + layer.mul_acc * get_mul(neuron.decay, None, None, None)
-            # grad_gamma *= layer.mul_acc
-            # grad_beta *= layer.mul_acc
+            grad_gamma *= layer.mul_acc
+            grad_beta *= layer.mul_acc
             grad_b *= layer.mul_acc.reshape(-1)
 
-        return None, grad_input, grad_weight, grad_b, grad_decay, grad_gamma, grad_beta, None, None
+        return grad_input, grad_weight, grad_b, grad_decay, grad_gamma, grad_beta, None, None
 
 
 # @torch.jit.script
@@ -333,8 +334,10 @@ def bn_backward(grad_x, x, gamma, mean, var, var1):
     grad_gamma = torch.sum((grad_x * x), dim=dims, keepdim=True)
     grad_x = grad_x * gamma * std_inv
     m = x.numel() // x.shape[1]
-    grad_x = grad_x - (torch.sum(grad_x * x, dim=dims, keepdim=True) * x + torch.sum(grad_x, dim=dims, keepdim=True)) / m
-    return grad_x, grad_gamma, grad_beta
+    
+    grad_w_ = grad_x - torch.sum(grad_x, dim=dims, keepdim=True) / m
+    grad_x = grad_w_ - torch.sum(grad_x * x, dim=dims, keepdim=True) * x / m
+    return grad_w_, grad_x, grad_gamma, grad_beta
 
 
 class MyBN(nn.Module):
