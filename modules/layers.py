@@ -175,14 +175,14 @@ class SynapseNeuron(nn.Module):
             self.gamma = nn.Parameter(torch.ones(*shape))
             self.beta = nn.Parameter(torch.zeros(*shape))
             self.run_mean = nn.Parameter(torch.zeros(*shape), requires_grad=False)
-            self.run_var = nn.Parameter(torch.zeros(*shape), requires_grad=False)
+            self.run_var = nn.Parameter(torch.ones(*shape), requires_grad=False)
             self.count = 0
             self.last_training = False
             self.mul_acc = torch.ones(*shape).cuda()
 
             # for estimating total mean and var
-            self.total_mean = torch.ones(*shape).cuda()
-            self.total_var = torch.ones(*shape).cuda()
+            self.total_mean = torch.zeros(*shape).cuda()
+            self.total_var = torch.zeros(*shape).cuda()
 
         if neuron_class == OnlineLIFNode:
             self.neuron = neuron_class(**kwargs)
