@@ -157,7 +157,7 @@ class ScaledWSConv2d(nn.Conv2d):
 
 
 class SynapseNeuron(nn.Module):
-    def __init__(self, synapse=None, neuron_class=OnlineLIFNode, **kwargs):
+    def __init__(self, synapse=None, eps=1e-4, neuron_class=OnlineLIFNode, **kwargs):
         super().__init__()
         self.synapse = synapse
         if isinstance(synapse, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
@@ -169,6 +169,8 @@ class SynapseNeuron(nn.Module):
         else:
             raise NotImplementedError(f'Synapse type {type(synapse)} not supported!')
         
+        self.gain = nn.Parameter(torch.ones(*shape).transpose(0,1)) if gain else None
+        self.eps = eps
         if config.args.BN:
             self.gamma = nn.Parameter(torch.ones(*shape))
             self.beta = nn.Parameter(torch.zeros(*shape))
@@ -216,7 +218,7 @@ class SynapseNeuron(nn.Module):
             self.s_in_acc = torch.zeros_like(spike, requires_grad=False)
             self.mul_acc = torch.ones_like(self.mul_acc)
 
-        weight = get_weight_sws(syn.weight, syn.gain, syn.eps) if config.args.WS else syn.weight
+        weight = get_weight_sws(syn.weight, syn.gain, self.eps) if config.args.WS else syn.weight
         
         self.neuron.get_decay_coef()
         if self.type == 'conv':
@@ -249,6 +251,7 @@ class OnlineFunc(torch.autograd.Function):
         # s_out, dsdu, unnormed_x, mean, var = neuron_forward(layer, x, gamma, beta)
 
         ctx.layer = layer
+        ctx.type = type
         if config.args.BN and layer.training:
             ctx.save_for_backward(s_in, weight, s_out, dsdu, unnormed_x, gamma, mean, var)
         else:
@@ -278,7 +281,7 @@ class OnlineFunc(torch.autograd.Function):
             grad_I, grad_gamma, grad_beta = grad_u, None, None
         grad_b = torch.sum(grad_I, dim=[i for i in range(len(grad_u.shape)) if i != 1], keepdim=False)
 
-        if layer.type == 'conv':
+        if ctx.type == 'conv':
             stride, padding, dilation, groups = ctx.convConfig
             grad_input = conv_backward_input(grad_I, s_in, weight, padding, stride, dilation, groups)
             grad_w_func = lambda grad_output, input: conv_backward_weight(grad_output, input, weight, padding, stride, dilation, groups)
@@ -314,8 +317,8 @@ def bn_forward(x, gamma, beta, layer):
         #     layer.run_var += - layer.run_var + var
 
         layer.total_mean += mean
-        # layer.total_var += var
-        layer.total_var += torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
+        layer.total_var += var
+        # layer.total_var += torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
 
     x = (x - layer.run_mean) / torch.sqrt(layer.run_var + 1e-4) * gamma + beta
     # x = (x - mean) / torch.sqrt(var + 1e-4) * gamma + beta
