@@ -55,6 +55,7 @@ def get_dataset(args):
         trainset = DVS128Gesture(args.data_dir, train=True, data_type='frame', frames_number=args.T, split_by='number')
         testset = DVS128Gesture(args.data_dir, train=False, data_type='frame', frames_number=args.T, split_by='number')
     elif dataset_name == 'imagenet':
+        dataloader = datasets.ImageFolder
         num_classes = 1000
 
         traindir = os.path.join(args.data_dir, 'train')
@@ -76,7 +77,7 @@ def get_dataset(args):
                 normalize,
             ])
         
-        trainset = dataloader(root=traindir, train=True, download=True, transform=transform_train)
-        testset = dataloader(root=valdir, train=False, download=True, transform=transform_test)
+        trainset = dataloader(root=traindir, transform=transform_train)
+        testset = dataloader(root=valdir, transform=transform_test)
         
     return num_classes, trainset, testset

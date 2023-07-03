@@ -41,6 +41,30 @@ def get_weight_sws(weight, gain, eps):
     return weight
 
 
+class ScaledWSLinear(nn.Conv2d):
+
+    def __init__(self, in_features, out_features, bias=True, gain=True, eps=1e-4):
+        super(ScaledWSLinear, self).__init__(in_features, out_features, bias)
+        self.gain = nn.Parameter(torch.ones(self.out_channels, 1, 1, 1)) if gain else None
+        self.eps = eps
+
+    def forward(self, x, **kwargs):
+        weight = get_weight_sws(self.weight, self.gain, self.eps) if config.args.WS else self.weight
+        return F.Linear(x, weight, self.bias)
+
+
+class ScaledWSConv2d(nn.Conv2d):
+
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, gain=True, eps=1e-4):
+        super(ScaledWSConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        self.gain = nn.Parameter(torch.ones(self.out_channels, 1, 1, 1)) if gain else None
+        self.eps = eps
+
+    def forward(self, x, **kwargs):
+        weight = get_weight_sws(self.weight, self.gain, self.eps) if config.args.WS else self.weight
+        return F.conv2d(x, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+
+
 @torch.jit.script
 def get_mul(decay, s_out, v, dsdu):
     with torch.no_grad():
@@ -132,34 +156,11 @@ def calc_grad_w(grad_w_func, grad_u, s_in, s_in_acc, decay, v, s_out, dsdu, lvl)
     return grad_weight
 
 
-class ScaledWSLinear(nn.Conv2d):
-
-    def __init__(self, in_features, out_features, bias=True, gain=True, eps=1e-4):
-        super(ScaledWSLinear, self).__init__(in_features, out_features, bias)
-        self.gain = nn.Parameter(torch.ones(self.out_channels, 1, 1, 1)) if gain else None
-        self.eps = eps
-
-    def forward(self, x, **kwargs):
-        weight = get_weight_sws(self.weight, self.gain, self.eps) if config.args.WS else self.weight
-        return F.Linear(x, weight, self.bias)
-
-
-class ScaledWSConv2d(nn.Conv2d):
-
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, gain=True, eps=1e-4):
-        super(ScaledWSConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
-        self.gain = nn.Parameter(torch.ones(self.out_channels, 1, 1, 1)) if gain else None
-        self.eps = eps
-
-    def forward(self, x, **kwargs):
-        weight = get_weight_sws(self.weight, self.gain, self.eps) if config.args.WS else self.weight
-        return F.conv2d(x, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
-
-
 class SynapseNeuron(nn.Module):
     def __init__(self, synapse=None, neuron_class=OnlineLIFNode, **kwargs):
         super().__init__()
         self.synapse = synapse
+        self.init = False
         if isinstance(synapse, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
             self.type = 'conv'
             shape = [1, synapse.out_channels, 1, 1]
@@ -188,7 +189,7 @@ class SynapseNeuron(nn.Module):
             # self.neuron = neuron_class(tau_shape = (1, self.out_channels, 1, 1))
             self.neuron = neuron_class(tau_shape = (1,), **kwargs)
         else:
-            raise TypeError('Type of neuron can only be Online LIF Node or Online PLIF Node!')
+            raise TypeError(f'Type of neuron can only be Online LIF Node or Online PLIF Node! Current neuron type is {neuron_class}.')
 
     def forward(self, spike, **kwargs):
         if self.training != self.last_training:
@@ -335,8 +336,8 @@ def bn_backward(grad_x, x, gamma, mean, var, var1):
     grad_x = grad_x * gamma * std_inv
     m = x.numel() // x.shape[1]
     
-    grad_w_ = grad_x - torch.sum(grad_x, dim=dims, keepdim=True) / m
-    grad_x = grad_w_ - torch.sum(grad_x * x, dim=dims, keepdim=True) * x / m
+    grad_w_ = grad_x - torch.sum(grad_x, dim=dims, keepdim=True) / m - torch.sum(grad_x * x, dim=dims, keepdim=True) * x / m
+    grad_x = grad_w_
     return grad_w_, grad_x, grad_gamma, grad_beta
 
 

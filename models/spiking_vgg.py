@@ -132,19 +132,17 @@ class OnlineSpikingVGG(nn.Module):
                     conv = nn.Conv2d(in_channels, v, kernel_size=3, padding=1, stride=stride, bias=True)
                     convNeuron = SynapseNeuron(conv, neuron_class=neuron, v_reset=None, **kwargs)
                     if BN:
-                        bn = nn.BatchNorm2d(v)
-                        # layers += [convNeuron, bn]
                         layers += [convNeuron]
                     else:
                         layers += [convNeuron, Scale(2.74)]
                 else:
                     conv2d = ScaledWSConv2d(in_channels, v, kernel_size=3, padding=1, stride=stride)
                     if BN:
-                        # bn = nn.BatchNorm2d(v)
-                        bn = MyBN(v)
-                        layers += [conv2d, bn, neuron(decay_input = False, v_reset = 0., tau=kwargs.get('tau', 2.0))]
+                        bn = nn.BatchNorm2d(v)
+                        # bn = MyBN(v)
+                        layers += [conv2d, bn, neuron(decay_input = False, v_reset = None, tau=kwargs.get('tau', 2.0))]
                     else:
-                        layers += [conv2d, neuron(decay_input = False, v_reset = 0., tau=kwargs.get('tau', 2.0)), Scale(2.74)]
+                        layers += [conv2d, neuron(decay_input = False, v_reset = None, tau=kwargs.get('tau', 2.0)), Scale(2.74)]
                 in_channels = v
         return SequentialModule(neuron, *layers)
 
