@@ -5,7 +5,7 @@ from torch import Tensor
 from typing import Any, Callable, List, Optional, Type, Union
 from modules import neuron_spikingjelly
 from modules.neurons import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, MyLIFNode
-from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron, MyBN
+from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron
 import config
 
 __all__ = ['OnlineSpikingResNet', 'online_spiking_resnet18', 'online_spiking_resnet34', 'online_spiking_resnet50', 
@@ -106,7 +106,7 @@ class BasicBlock(nn.Module):
         out = self.convNeuron2(out, **kwargs)
         
         if self.downsample is not None:
-            identity = self.downsample(x)
+            identity = self.downsample(x, **kwargs)
 
         out = out + identity
 
@@ -158,7 +158,7 @@ class Bottleneck(nn.Module):
         out = self.convNeuron3(out, **kwargs)
 
         if self.downsample is not None:
-            identity = self.downsample(x)
+            identity = self.downsample(x, **kwargs)
 
         out = out + identity
 
@@ -242,10 +242,8 @@ class OnlineSpikingResNet(nn.Module):
             self.dilation *= stride
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                norm_layer(planes * block.expansion),
-            )
+            conv_down = conv1x1(self.inplanes, planes * block.expansion, stride)
+            downsample = _merge_synapse_neuron(conv_down, neuron, planes * block.expansion, **kwargs)
 
         layers = []
         layers.append(

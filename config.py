@@ -28,6 +28,7 @@ def parse(fname):
                 'drop_rate': 0.0,
                 'stochdepth_rate': 0.0,
                 'weight_decay': 0.0,
+                'eps': 1e-4,
                 'cnf': '',
                 'T_train': None,
                 'loss_lambda': 0.05,
