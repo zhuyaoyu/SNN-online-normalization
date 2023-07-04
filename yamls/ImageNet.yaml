@@ -4,8 +4,8 @@ b: 128
 epochs: 100
 T_max: 100
 model: "online_spiking_resnet34"
-lr: 0.05
-weight_decay: 0.00005
+lr: 0.1
+weight_decay: 0.0001
 WS: False
 BN: True
 tau_online_level: 5

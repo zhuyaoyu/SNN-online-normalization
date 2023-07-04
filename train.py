@@ -3,6 +3,9 @@ import os
 import time
 import torch
 from torch.utils.data import DataLoader
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+from contextlib import nullcontext
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,28 +21,40 @@ import config
 import argparse
 import math
 import torch.utils.data as data
-
-_seed_ = 2023
-import random
-random.seed(_seed_)
-
-torch.manual_seed(_seed_)  # use torch.manual_seed() to seed the RNG for all devices (both CPU and CUDA)
-torch.cuda.manual_seed_all(_seed_)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-
 import numpy as np
-np.random.seed(_seed_)
+
+import random
+
+
+def init_seeds(_seed_):
+    random.seed(_seed_)
+    torch.manual_seed(_seed_)  # use torch.manual_seed() to seed the RNG for all devices (both CPU and CUDA)
+    torch.cuda.manual_seed_all(_seed_)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(_seed_)
+
 
 def is_dynamic(dataset):
     return dataset.lower() in ['cifar10dvs', 'dvsgesture']
+
 
 def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-config', type=str, help='config .yaml file')
+    parser.add_argument('-dist', type=str, default="nccl", help='distributed data parallel backend')
+    parser.add_argument('--local-rank', type=int, default=-1)
     
     cfg = parser.parse_args()
+    if cfg.local_rank >= 0:
+        torch.cuda.set_device(cfg.local_rank)
+        torch.distributed.init_process_group(backend=cfg.dist)
+        multigpu = True
+        init_seeds(1 + cfg.local_rank)
+    else:
+        multigpu = False
+        init_seeds(1)
     config.parse(cfg.config)
     args = config.args
 
@@ -47,8 +62,13 @@ def main():
     # os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
 
     num_classes, trainset, testset = get_dataset(args)
-    train_data_loader = data.DataLoader(trainset, batch_size=args.b, shuffle=True, num_workers=args.j, pin_memory=True)
-    test_data_loader = data.DataLoader(testset, batch_size=args.b, shuffle=False, num_workers=args.j, pin_memory=True)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(trainset) if multigpu else None
+    if train_sampler is None:
+        train_loader = torch.utils.data.DataLoader(trainset, shuffle=True, batch_size=args.b, num_workers=8, pin_memory=True)
+    else:
+        train_loader = torch.utils.data.DataLoader(trainset, sampler=train_sampler, batch_size=args.b, num_workers=8, pin_memory=True)
+    # train_loader = data.DataLoader(trainset, batch_size=args.b, shuffle=True, num_workers=args.j, pin_memory=True)
+    test_loader = data.DataLoader(testset, batch_size=args.b, shuffle=False, num_workers=args.j, pin_memory=True)
 
     # TODO: LIF or PLIF? should we add this choice?
     c_in = 2 if is_dynamic(args.dataset) else 3
@@ -63,20 +83,8 @@ def main():
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
     net.cuda()
-
-    tau_param = []
-    for layer in net.modules():
-        if isinstance(layer, neuron_spikingjelly.ParametricLIFNode):
-            tau_param.append(layer.w)
-        elif isinstance(layer, layers.SynapseNeuron):
-            neuron = layer.neuron
-            if isinstance(neuron, neurons.OnlinePLIFNode):
-                tau_param.append(neuron.w)
-
-    # params = [
-    #     {'params': list(set(net.parameters()) - set(tau_param))},
-    #     {'params': tau_param, 'weight_decay': 0.},
-    # ]
+    if multigpu:
+        net = DDP(net)
 
     optimizer = None
     if args.opt == 'SGD':
@@ -146,7 +154,9 @@ def main():
 
     for epoch in range(start_epoch, args.epochs):
         start_time = time.time()
-        net.train()
+        if multigpu:
+            train_loader.sampler.set_epoch(epoch)
+        (net.module if multigpu else net).train()
 
         batch_time = AverageMeter()
         data_time = AverageMeter()
@@ -155,13 +165,13 @@ def main():
         top5 = AverageMeter()
         end = time.time()
 
-        bar = Bar('Processing', max=len(train_data_loader))
+        bar = Bar('Processing', max=len(train_loader))
 
         train_loss = 0
         train_acc = 0
         train_samples = 0
         batch_idx = 0
-        for frame, label in train_data_loader:
+        for frame, label in train_loader:
             batch_idx += 1
             frame = frame.float().cuda()
             t_step = args.T_train if args.T_train is not None else args.T
@@ -179,34 +189,13 @@ def main():
             if args.BPTT:
                 bptt_loss = 0
                 optimizer.zero_grad()
-            elif not args.online_update:
+            else:
                 optimizer.zero_grad()
             
             for t in range(t_step):
-                if args.online_update:
-                    optimizer.zero_grad()
                 input_frame = frame[:, t] if is_dynamic(args.dataset) else frame
-                if args.amp:
-                    with amp.autocast():
-                        if t == 0:
-                            out_fr = net(input_frame, init=True)
-                            total_fr = out_fr.clone().detach()
-                        else:
-                            out_fr = net(input_frame)
-                            total_fr += out_fr.clone().detach()
-                            #total_fr = total_fr * (1 - 1. / args.tau) + out_fr
-                        if args.loss_lambda > 0.0:
-                            label_one_hot = F.one_hot(label, num_classes).float()
-                            mse_loss = criterion_mse(out_fr, label_one_hot)
-                            loss = ((1 - args.loss_lambda) * F.cross_entropy(out_fr, label) + args.loss_lambda * mse_loss) / t_step
-                        else:
-                            loss = F.cross_entropy(out_fr, label) / t_step
-                    scaler.scale(loss).backward()
-
-                    if args.online_update:
-                        scaler.step(optimizer)
-                        scaler.update()
-                else:
+                amp_context = amp.autocast if args.amp else nullcontext
+                with amp_context():
                     if t == 0:
                         out_fr = net(input_frame, init=True)
                         total_fr = out_fr.clone().detach()
@@ -220,13 +209,16 @@ def main():
                         loss = ((1 - args.loss_lambda) * F.cross_entropy(out_fr, label) + args.loss_lambda * mse_loss) / t_step
                     else:
                         loss = F.cross_entropy(out_fr, label) / t_step
-                    if not args.BPTT:
-                        loss.backward()
+                
+                ddp_context = net.no_sync if cfg.local_rank != -1 and t == t_step != 0 else nullcontext
+                with ddp_context():
+                    if args.amp:
+                        scaler.scale(loss).backward()
                     else:
-                        bptt_loss += loss
-
-                    if args.online_update:
-                        optimizer.step()
+                        if not args.BPTT:
+                            loss.backward()
+                        else:
+                            bptt_loss += loss
 
                 batch_loss += loss.item()
                 train_loss += loss.item() * label.numel()
@@ -234,7 +226,7 @@ def main():
                 bptt_loss.backward()
                 optimizer.step()
                 net.reset_v()
-            elif not args.online_update:
+            else:
                 if args.amp:
                     scaler.step(optimizer)
                     scaler.update()
@@ -256,19 +248,19 @@ def main():
             end = time.time()
 
             # plot progress
-            bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-                        batch=batch_idx,
-                        size=len(train_data_loader),
-                        data=data_time.avg,
-                        bt=batch_time.avg,
-                        total=bar.elapsed_td,
-                        eta=bar.eta_td,
-                        loss=losses.avg,
-                        top1=top1.avg,
-                        top5=top5.avg,
-                        )
-            bar.next()
-            # exit(0)
+            if (not multigpu or dist.get_rank()==0):
+                bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+                            batch=batch_idx,
+                            size=len(train_loader),
+                            data=data_time.avg,
+                            bt=batch_time.avg,
+                            total=bar.elapsed_td,
+                            eta=bar.eta_td,
+                            loss=losses.avg,
+                            top1=top1.avg,
+                            top5=top5.avg,
+                            )
+                bar.next()
         bar.finish()
 
         train_loss /= train_samples
@@ -278,7 +270,7 @@ def main():
         writer.add_scalar('train_acc', train_acc, epoch)
         lr_scheduler.step()
 
-        net.eval()
+        (net.module if multigpu else net).eval()
 
         batch_time = AverageMeter()
         data_time = AverageMeter()
@@ -286,14 +278,14 @@ def main():
         top1 = AverageMeter()
         top5 = AverageMeter()
         end = time.time()
-        bar = Bar('Processing', max=len(test_data_loader))
+        bar = Bar('Processing', max=len(test_loader))
 
         test_loss = 0
         test_acc = 0
         test_samples = 0
         batch_idx = 0
         with torch.no_grad():
-            for frame, label in test_data_loader:
+            for frame, label in test_loader:
                 batch_idx += 1
                 frame = frame.float().cuda()
                 label = label.cuda()
@@ -334,18 +326,19 @@ def main():
                 end = time.time()
 
                 # plot progress
-                bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-                            batch=batch_idx,
-                            size=len(test_data_loader),
-                            data=data_time.avg,
-                            bt=batch_time.avg,
-                            total=bar.elapsed_td,
-                            eta=bar.eta_td,
-                            loss=losses.avg,
-                            top1=top1.avg,
-                            top5=top5.avg,
-                            )
-                bar.next()
+                if (not multigpu or dist.get_rank()==0):
+                    bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+                                batch=batch_idx,
+                                size=len(test_loader),
+                                data=data_time.avg,
+                                bt=batch_time.avg,
+                                total=bar.elapsed_td,
+                                eta=bar.eta_td,
+                                loss=losses.avg,
+                                top1=top1.avg,
+                                top5=top5.avg,
+                                )
+                    bar.next()
         bar.finish()
 
         test_loss /= test_samples
@@ -359,7 +352,7 @@ def main():
             save_max = True
 
         checkpoint = {
-            'net': net.state_dict(),
+            'net': (net.module if multigpu else net).state_dict(),
             'optimizer': optimizer.state_dict(),
             'lr_scheduler': lr_scheduler.state_dict(),
             'epoch': epoch,
@@ -376,7 +369,8 @@ def main():
         #print(args)
         #print(out_dir)
         total_time = time.time() - start_time
-        print(f'epoch={epoch}, train_loss={train_loss}, train_acc={train_acc}, test_loss={test_loss}, test_acc={test_acc}, max_test_acc={max_test_acc}, total_time={total_time}, escape_time={(datetime.datetime.now()+datetime.timedelta(seconds=total_time * (args.epochs - epoch))).strftime("%Y-%m-%d %H:%M:%S")}')
+        if (not multigpu or dist.get_rank()==0):
+            print(f'epoch={epoch}, train_loss={train_loss}, train_acc={train_acc}, test_loss={test_loss}, test_acc={test_acc}, max_test_acc={max_test_acc}, total_time={total_time}, escape_time={(datetime.datetime.now()+datetime.timedelta(seconds=total_time * (args.epochs - epoch))).strftime("%Y-%m-%d %H:%M:%S")}')
 
 if __name__ == '__main__':
     main()
