@@ -78,7 +78,7 @@ def main():
         net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS)
     else:
         neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
-        net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0)
+        net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, zero_init_residual=False)
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
     net.cuda()
@@ -166,7 +166,8 @@ def main():
         top5 = AverageMeter()
         end = time.time()
 
-        bar = Bar('Processing', max=len(train_loader))
+        if (not multigpu or dist.get_rank()==0):
+            bar = Bar('Processing', max=len(train_loader))
 
         train_loss = 0
         train_acc = 0
@@ -262,7 +263,6 @@ def main():
                             top5=top5.avg,
                             )
                 bar.next()
-        bar.finish()
 
         train_loss /= train_samples
         train_acc /= train_samples
@@ -279,7 +279,10 @@ def main():
         top1 = AverageMeter()
         top5 = AverageMeter()
         end = time.time()
-        bar = Bar('Processing', max=len(test_loader))
+
+        if (not multigpu or dist.get_rank()==0):
+            bar.finish()
+            bar = Bar('Processing', max=len(test_loader))
 
         test_loss = 0
         test_acc = 0
@@ -340,7 +343,8 @@ def main():
                                 top5=top5.avg,
                                 )
                     bar.next()
-        bar.finish()
+        if (not multigpu or dist.get_rank()==0):
+            bar.finish()
 
         test_loss /= test_samples
         test_acc /= test_samples

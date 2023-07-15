@@ -197,7 +197,8 @@ class SynapseNeuron(nn.Module):
             with torch.no_grad():
                 if self.training:
                     rate = 1/2 * (1 + math.cos(math.pi + math.pi * self.count / config.args.epochs))
-                    self.momentum = 0.8 + (0.95 - 0.8) * rate
+                    # self.momentum = 0.8 + (0.95 - 0.8) * rate
+                    self.momentum = 0.9
                     self.count += 1
                 self.last_training = self.training
         
@@ -222,16 +223,16 @@ class SynapseNeuron(nn.Module):
         
         self.neuron.get_decay_coef()
         if self.type == 'conv':
-            spike = OnlineFunc.apply(spike, weight, syn.bias, self.neuron.decay, self.gamma, self.beta, (syn.stride, syn.padding, syn.dilation, syn.groups), self)
+            spike = OnlineFunc.apply(spike, weight, syn.bias, self.gamma, self.beta, (syn.stride, syn.padding, syn.dilation, syn.groups), self)
         else:
-            spike = OnlineFunc.apply(spike, weight, syn.bias, self.neuron.decay, self.gamma, self.beta, None, self)
+            spike = OnlineFunc.apply(spike, weight, syn.bias, self.gamma, self.beta, None, self)
         self.init = False
         return spike
 
 
 class OnlineFunc(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, s_in, weight, bias, decay, gamma, beta, convConfig, layer):
+    def forward(ctx, s_in, weight, bias, gamma, beta, convConfig, layer):
         # print(dist.get_rank(), weight.shape, torch.mean(weight), torch.var(weight))
         # need du/du (decay), du/ds (reset) and ds/du (surrogate)
         if layer.type == 'conv':
@@ -269,11 +270,6 @@ class OnlineFunc(torch.autograd.Function):
             (s_in, weight, s_out, dsdu) = ctx.saved_tensors
 
         grad_u = grad * dsdu
-        if isinstance(neuron, OnlinePLIFNode):
-            # grad_decay = torch.sum(grad_u * neuron.decay_acc, dim=[0,2,3], keepdim=True)
-            grad_decay = torch.sum(grad_u * neuron.decay_acc).reshape(1)
-        else:
-            grad_decay = None
 
         if config.args.BN:
             grad_w_, grad_I, grad_gamma, grad_beta = bn_backward(grad_u, x, gamma, mean, var, layer.run_var, torch.tensor(config.args.eps))
@@ -293,11 +289,12 @@ class OnlineFunc(torch.autograd.Function):
 
         if config.args.weight_online_level >= 2:
             layer.mul_acc = 1 + layer.mul_acc * get_mul(neuron.decay, None, None, None)
-            grad_gamma *= layer.mul_acc
-            grad_beta *= layer.mul_acc
-            grad_b *= layer.mul_acc.reshape(-1)
+            grad_weight /= layer.mul_acc.transpose(0,1)
+            # grad_b *= layer.mul_acc
+            # grad_gamma *= layer.mul_acc
+            # grad_beta *= layer.mul_acc
 
-        return grad_input, grad_weight, grad_b, grad_decay, grad_gamma, grad_beta, None, None
+        return grad_input, grad_weight, grad_b, grad_gamma, grad_beta, None, None
 
 
 # @torch.jit.script
