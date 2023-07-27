@@ -46,7 +46,7 @@ class ScaledWSLinear(nn.Conv2d):
 
     def __init__(self, in_features, out_features, bias=True, gain=True):
         super(ScaledWSLinear, self).__init__(in_features, out_features, bias)
-        self.gain = nn.Parameter(torch.ones(self.out_channels, 1, 1, 1)) if gain else None
+        self.gain = nn.Parameter(torch.ones(self.out_channels, 1)) if gain else None
         self.eps = config.args.eps
 
     def forward(self, x, **kwargs):
@@ -170,6 +170,10 @@ class SynapseNeuron(nn.Module):
             shape = [1, synapse.out_features]
         else:
             raise NotImplementedError(f'Synapse type {type(synapse)} not supported!')
+
+        if config.args.WS:
+            self.gain = nn.Parameter(torch.ones(*shape)).transpose(0,1).cuda()
+            self.eps = config.args.eps
         
         if config.args.BN:
             self.gamma = nn.Parameter(torch.ones(*shape))
@@ -183,6 +187,8 @@ class SynapseNeuron(nn.Module):
             # for estimating total mean and var
             self.total_mean = torch.zeros(*shape).cuda()
             self.total_var = torch.zeros(*shape).cuda()
+        else:
+            self.gamma, self.beta = None, None
 
         if neuron_class == OnlineLIFNode:
             self.neuron = neuron_class(**kwargs)
@@ -193,7 +199,7 @@ class SynapseNeuron(nn.Module):
             raise TypeError(f'Type of neuron can only be Online LIF Node or Online PLIF Node! Current neuron type is {neuron_class}.')
 
     def forward(self, spike, **kwargs):
-        if self.training != self.last_training:
+        if config.args.BN and self.training != self.last_training:
             with torch.no_grad():
                 if self.training:
                     rate = 1/2 * (1 + math.cos(math.pi + math.pi * self.count / config.args.epochs))
@@ -217,9 +223,10 @@ class SynapseNeuron(nn.Module):
             
             self.neuron.forward_init(spike, shape=shape)
             self.s_in_acc = torch.zeros_like(spike, requires_grad=False)
-            self.mul_acc = torch.ones_like(self.mul_acc)
+            if config.args.BN:
+                self.mul_acc = torch.ones_like(self.mul_acc)
 
-        weight = get_weight_sws(syn.weight, syn.gain, syn.eps) if config.args.WS else syn.weight
+        weight = get_weight_sws(syn.weight, self.gain, self.eps) if config.args.WS else syn.weight
         
         self.neuron.get_decay_coef()
         if self.type == 'conv':
@@ -243,12 +250,7 @@ class OnlineFunc(torch.autograd.Function):
         
         if config.args.BN:
             unnormed_x = x
-            if layer.training:
-                x, mean, var = bn_forward(x, gamma, beta, layer)
-            else:
-                x = (x - layer.run_mean) / torch.sqrt(layer.run_var + config.args.eps)
-                x = x * gamma + beta
-                mean, var = None, None
+            x, mean, var = bn_forward(x, gamma, beta, layer)
         s_out, dsdu = neuron_forward(layer, x, gamma, beta)
         # s_out, dsdu, unnormed_x, mean, var = neuron_forward(layer, x, gamma, beta)
 
@@ -287,17 +289,22 @@ class OnlineFunc(torch.autograd.Function):
         # grad_weight = calc_grad_w(grad_w_func, grad_I, s_in, layer.s_in_acc, neuron.decay, neuron.v, s_out, dsdu, config.args.weight_online_level)
         grad_weight = calc_grad_w(grad_w_func, grad_w_, s_in, layer.s_in_acc, neuron.decay, neuron.v, s_out, dsdu, config.args.weight_online_level)
 
-        if config.args.weight_online_level >= 2:
-            layer.mul_acc = 1 + layer.mul_acc * get_mul(neuron.decay, None, None, None)
-            grad_weight /= layer.mul_acc.transpose(0,1)
-            # grad_b *= layer.mul_acc
-            # grad_gamma *= layer.mul_acc
-            # grad_beta *= layer.mul_acc
+        if config.args.BN and config.args.weight_online_level >= 2:
+            align_scale(layer.mul_acc, get_mul(neuron.decay, None, None, None), grad_weight)
 
         return grad_input, grad_weight, grad_b, grad_gamma, grad_beta, None, None
 
 
-# @torch.jit.script
+@torch.jit.script
+def align_scale(mul_acc, decay, grad_weight):
+    mul_acc *= decay
+    mul_acc += 1
+    grad_weight /= mul_acc.transpose(0,1)
+    # grad_b *= layer.mul_acc
+    # grad_gamma *= layer.mul_acc
+    # grad_beta *= layer.mul_acc
+
+
 def bn_forward(x, gamma, beta, layer):
     dims = [0] if len(x.shape) == 2 else [0,2,3]
     if layer.training:
@@ -329,9 +336,18 @@ def bn_forward(x, gamma, beta, layer):
         layer.total_var += var
         # layer.total_var += torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
 
-    x = (x - layer.run_mean) / torch.sqrt(layer.run_var + config.args.eps) * gamma + beta
-    # x = (x - mean) / torch.sqrt(var + config.args.eps) * gamma + beta
+    if layer.training:
+        x = calc_bn(x, layer.run_mean, layer.run_var, torch.tensor(config.args.eps), gamma, beta)
+        # x = calc_bn(x, mean, var, config.args.eps, gamma, beta)
+    else:
+        x = calc_bn(x, layer.run_mean, layer.run_var, torch.tensor(config.args.eps), gamma, beta)
+        mean, var = None, None
     return x, mean, var
+
+
+@torch.jit.script
+def calc_bn(x, mean, var, eps, gamma, beta):
+    return (x - mean) / torch.sqrt(var + eps) * gamma + beta
 
 
 @torch.jit.script

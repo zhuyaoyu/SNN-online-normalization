@@ -4,6 +4,7 @@ b: 128
 epochs: 300
 T_max: 300
 weight_decay: 0.0003
+lr: 0.15
 WS: False
 BN: True
 tau_online_level: 5

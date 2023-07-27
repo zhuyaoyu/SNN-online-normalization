@@ -65,7 +65,7 @@ def _merge_synapse_neuron(synapse: Type[Union[nn.Conv2d, nn.Linear]] = None, neu
             layers = [synapse, bn, neuron(decay_input = False, v_reset = None, tau=kwargs.get('tau', 2.0))]
         else:
             layers = [synapse, neuron(decay_input = False, v_reset = None, tau=kwargs.get('tau', 2.0)), Scale(2.74)]
-    return SequentialModule(layers) if len(layers) > 1 else layers[0]
+    return SequentialModule(*layers) if len(layers) > 1 else layers[0]
 
 
 class BasicBlock(nn.Module):
@@ -242,13 +242,13 @@ class OnlineSpikingResNet(nn.Module):
             self.dilation *= stride
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
-            # conv_down = conv1x1(self.inplanes, planes * block.expansion, stride)
-            # downsample = _merge_synapse_neuron(conv_down, neuron, planes * block.expansion, **kwargs)
-            downsample = SequentialModule(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                nn.SyncBatchNorm(planes * block.expansion),
-                OnlineLIFNode(**kwargs),
-            )
+            conv_down = conv1x1(self.inplanes, planes * block.expansion, stride)
+            downsample = _merge_synapse_neuron(conv_down, neuron, planes * block.expansion, **kwargs)
+            # downsample = SequentialModule(
+            #     conv1x1(self.inplanes, planes * block.expansion, stride),
+            #     nn.SyncBatchNorm(planes * block.expansion),
+            #     OnlineLIFNode(**kwargs),
+            # )
 
         layers = []
         layers.append(

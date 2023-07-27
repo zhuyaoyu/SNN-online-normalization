@@ -116,7 +116,11 @@ def main():
         start_epoch = checkpoint['epoch'] + 1
         max_test_acc = checkpoint['max_test_acc']
 
-    out_dir = os.path.join(args.out_dir, f'{args.model}_{args.cnf}_T_{args.T}_T_train_{args.T_train}_{args.opt}_lr_{args.lr}_tau_{args.tau}_taulvl_{args.tau_online_level}_wlvl_{args.weight_online_level}_')
+    out_dir = os.path.join(args.out_dir, f'{args.model}_{args.cnf}_T_{args.T}_T_train_{args.T_train}_{args.opt}_lr_{args.lr}_tau_{args.tau}_wlvl_{args.weight_online_level}_')
+    if args.WS:
+        out_dir += 'WS_'
+    if args.BN:
+        out_dir += 'BN_'
     if args.BPTT:
         out_dir += 'BPTT_'
     if args.lr_scheduler == 'CosALR':
