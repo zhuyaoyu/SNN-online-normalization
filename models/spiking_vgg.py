@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Function
-from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron, MyBN
+from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron
 from modules.neurons import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, MyLIFNode
 from modules import neuron_spikingjelly
 import config

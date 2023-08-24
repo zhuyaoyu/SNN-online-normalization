@@ -5,7 +5,7 @@ from torch import Tensor
 from typing import Any, Callable, List, Optional, Type, Union
 from modules import neuron_spikingjelly
 from modules.neurons import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, MyLIFNode
-from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron, MyBN
+from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron
 import config
 
 __all__ = ['OnlineSpikingResNet', 'online_spiking_resnet18', 'online_spiking_resnet34', 'online_spiking_resnet50', 
@@ -65,7 +65,7 @@ def _merge_synapse_neuron(synapse: Type[Union[nn.Conv2d, nn.Linear]] = None, neu
             layers = [synapse, bn, neuron(decay_input = False, v_reset = None, tau=kwargs.get('tau', 2.0))]
         else:
             layers = [synapse, neuron(decay_input = False, v_reset = None, tau=kwargs.get('tau', 2.0)), Scale(2.74)]
-    return SequentialModule(layers) if len(layers) > 1 else layers[0]
+    return SequentialModule(*layers) if len(layers) > 1 else layers[0]
 
 
 class BasicBlock(nn.Module):
@@ -218,12 +218,12 @@ class OnlineSpikingResNet(nn.Module):
         # Zero-initialize the last BN in each residual branch,
         # so that the residual branch starts with zeros, and each residual block behaves like an identity.
         # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
-        # if zero_init_residual:
-        #     for m in self.modules():
-        #         if isinstance(m, Bottleneck) and m.bn3.weight is not None:
-        #             nn.init.constant_(m.bn3.weight, 0)  # type: ignore[arg-type]
-        #         elif isinstance(m, BasicBlock) and m.bn2.weight is not None:
-        #             nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck) and m.convNeuron3.gamma is not None:
+                    nn.init.constant_(m.convNeuron3.gamma, 0)  # type: ignore[arg-type]
+                elif isinstance(m, BasicBlock) and m.convNeuron2.gamma is not None:
+                    nn.init.constant_(m.convNeuron2.gamma, 0)  # type: ignore[arg-type]
 
     def _make_layer(
         self,
@@ -244,6 +244,11 @@ class OnlineSpikingResNet(nn.Module):
         if stride != 1 or self.inplanes != planes * block.expansion:
             conv_down = conv1x1(self.inplanes, planes * block.expansion, stride)
             downsample = _merge_synapse_neuron(conv_down, neuron, planes * block.expansion, **kwargs)
+            # downsample = SequentialModule(
+            #     conv1x1(self.inplanes, planes * block.expansion, stride),
+            #     nn.SyncBatchNorm(planes * block.expansion),
+            #     OnlineLIFNode(**kwargs),
+            # )
 
         layers = []
         layers.append(

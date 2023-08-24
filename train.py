@@ -51,10 +51,9 @@ def main():
         torch.cuda.set_device(cfg.local_rank)
         torch.distributed.init_process_group(backend=cfg.dist)
         multigpu = True
-        init_seeds(1 + cfg.local_rank)
     else:
         multigpu = False
-        init_seeds(1)
+    init_seeds(1)
     config.parse(cfg.config)
     args = config.args
 
@@ -79,7 +78,7 @@ def main():
         net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS)
     else:
         neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
-        net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0)
+        net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, zero_init_residual=False)
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
     net.cuda()
@@ -117,7 +116,11 @@ def main():
         start_epoch = checkpoint['epoch'] + 1
         max_test_acc = checkpoint['max_test_acc']
 
-    out_dir = os.path.join(args.out_dir, f'{args.model}_{args.cnf}_T_{args.T}_T_train_{args.T_train}_{args.opt}_lr_{args.lr}_tau_{args.tau}_taulvl_{args.tau_online_level}_wlvl_{args.weight_online_level}_')
+    out_dir = os.path.join(args.out_dir, f'{args.model}_{args.cnf}_T_{args.T}_T_train_{args.T_train}_{args.opt}_lr_{args.lr}_tau_{args.tau}_wlvl_{args.weight_online_level}_')
+    if args.WS:
+        out_dir += 'WS_'
+    if args.BN:
+        out_dir += 'BN_' + args.BN_type + '_'
     if args.BPTT:
         out_dir += 'BPTT_'
     if args.lr_scheduler == 'CosALR':
@@ -152,6 +155,8 @@ def main():
     
     criterion_mse = nn.MSELoss(reduce=True)
 
+    if multigpu:
+        init_seeds(1 + cfg.local_rank)
     for epoch in range(start_epoch, args.epochs):
         start_time = time.time()
         if multigpu:
@@ -165,7 +170,8 @@ def main():
         top5 = AverageMeter()
         end = time.time()
 
-        bar = Bar('Processing', max=len(train_loader))
+        if (not multigpu or dist.get_rank()==0):
+            bar = Bar('Processing', max=len(train_loader))
 
         train_loss = 0
         train_acc = 0
@@ -261,7 +267,6 @@ def main():
                             top5=top5.avg,
                             )
                 bar.next()
-        bar.finish()
 
         train_loss /= train_samples
         train_acc /= train_samples
@@ -278,7 +283,10 @@ def main():
         top1 = AverageMeter()
         top5 = AverageMeter()
         end = time.time()
-        bar = Bar('Processing', max=len(test_loader))
+
+        if (not multigpu or dist.get_rank()==0):
+            bar.finish()
+            bar = Bar('Processing', max=len(test_loader))
 
         test_loss = 0
         test_acc = 0
@@ -339,7 +347,8 @@ def main():
                                 top5=top5.avg,
                                 )
                     bar.next()
-        bar.finish()
+        if (not multigpu or dist.get_rank()==0):
+            bar.finish()
 
         test_loss /= test_samples
         test_acc /= test_samples
