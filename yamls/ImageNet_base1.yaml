@@ -9,8 +9,8 @@ weight_decay: 0.00002
 WS: False
 BN: True
 BN_type: "new"
-tau_online_level: 5
-weight_online_level: 4
+tau_online_level: 1
+weight_online_level: 1
 data_dir: "/home/data/public/ImageNet/"
 dataset: "imagenet"
 out_dir: "logs/imagenet"

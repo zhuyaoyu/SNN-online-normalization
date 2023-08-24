@@ -120,7 +120,7 @@ def main():
     if args.WS:
         out_dir += 'WS_'
     if args.BN:
-        out_dir += 'BN_'
+        out_dir += 'BN_' + args.BN_type + '_'
     if args.BPTT:
         out_dir += 'BPTT_'
     if args.lr_scheduler == 'CosALR':

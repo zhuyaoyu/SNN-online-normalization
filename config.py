@@ -1,5 +1,6 @@
 ﻿import yaml
 import json
+import torch.distributed as dist
 
 class obj(object):
     def __init__(self, dict_):
@@ -34,6 +35,7 @@ def parse(fname):
                 'loss_lambda': 0.05,
                 'online_update': False,
                 'BN': False,
+                'BN_type': 'old',
                 'WS': True,
                 'BPTT': False,
                 'tau_online_level': 1, # online level of tau, 1 for baseline, 5 for max online level
@@ -57,5 +59,9 @@ def parse(fname):
     args.tau = float(args.tau)
     if args.T_train is None:
         args.T_train = args.T
+    assert(args.BN_type in ['old', 'new'])
+
+    if dist.is_available() and dist.is_initialized():
+        args.b //= dist.get_world_size(dist.group.WORLD)
     
     states = dict2obj({'T': args.T})

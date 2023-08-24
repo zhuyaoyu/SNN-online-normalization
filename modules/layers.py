@@ -204,7 +204,7 @@ class SynapseNeuron(nn.Module):
                 if self.training:
                     rate = 1/2 * (1 + math.cos(math.pi + math.pi * self.count / config.args.epochs))
                     # self.momentum = 0.8 + (0.95 - 0.8) * rate
-                    self.momentum = 0.9
+                    self.momentum = 0.95
                     self.count += 1
                 self.last_training = self.training
         
@@ -274,7 +274,8 @@ class OnlineFunc(torch.autograd.Function):
         grad_u = grad * dsdu
 
         if config.args.BN:
-            grad_w_, grad_I, grad_gamma, grad_beta = bn_backward(grad_u, x, gamma, mean, var, layer.run_var, torch.tensor(config.args.eps))
+            var1 = layer.run_var if config.args.BN_type == 'new' else var
+            grad_w_, grad_I, grad_gamma, grad_beta = bn_backward(grad_u, x, gamma, mean, var, var1, torch.tensor(config.args.eps))
         else:
             grad_w_, grad_I, grad_gamma, grad_beta = grad_u, grad_u, None, None
         grad_b = torch.sum(grad_I, dim=[i for i in range(len(grad_u.shape)) if i != 1], keepdim=False)
@@ -310,8 +311,11 @@ def bn_forward(x, gamma, beta, layer):
     if layer.training:
         if layer.init:
             T = config.args.T_train if layer.training else config.args.T
-            layer.run_mean += (1 - layer.momentum) * (layer.total_mean / T - layer.run_mean)
-            layer.run_var += (1 - layer.momentum) * (layer.total_var / T - layer.run_var)
+            mean = layer.total_mean / T
+            var = layer.total_var / T
+            if config.args.BN_type == 'new': var -= mean ** 2
+            layer.run_mean += (1 - layer.momentum) * (mean - layer.run_mean)
+            layer.run_var += (1 - layer.momentum) * (var - layer.run_var)
             layer.total_mean = 0.
             layer.total_var = 0.
 
@@ -334,11 +338,13 @@ def bn_forward(x, gamma, beta, layer):
         
         layer.total_mean += mean
         layer.total_var += var
-        # layer.total_var += torch.mean((x-layer.run_mean)**2, dim=dims, keepdim=True)
+        if config.args.BN_type == 'new': layer.total_var += mean ** 2
 
     if layer.training:
-        x = calc_bn(x, layer.run_mean, layer.run_var, torch.tensor(config.args.eps), gamma, beta)
-        # x = calc_bn(x, mean, var, config.args.eps, gamma, beta)
+        if config.args.BN_type == 'old':
+            x = calc_bn(x, mean, var, torch.tensor(config.args.eps), gamma, beta)
+        else:
+            x = calc_bn(x, layer.run_mean, layer.run_var, torch.tensor(config.args.eps), gamma, beta)
     else:
         x = calc_bn(x, layer.run_mean, layer.run_var, torch.tensor(config.args.eps), gamma, beta)
         mean, var = None, None
