@@ -1,6 +1,6 @@
 T: 4
 tau: 2
-b: 128
+b: 256
 epochs: 100
 T_max: 100
 model: "online_spiking_resnet34"
