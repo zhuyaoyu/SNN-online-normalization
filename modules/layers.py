@@ -79,6 +79,7 @@ def neuron_forward(layer, x, gamma, beta):
     v_last = neuron.v
     neuron.v_float_to_tensor(x)
     neuron.neuronal_charge(x)
+    neuron.adjust_th() # newly added
     
     # unnormed_v = neuron.v
     # if config.args.BN:

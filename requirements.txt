@@ -2,3 +2,4 @@ matplotlib
 tensorboard
 progress
 torchtoolbox
+numpy==1.20

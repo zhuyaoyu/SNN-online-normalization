@@ -75,6 +75,11 @@ class OnlineLIFNode(LIFNode):
     
     def get_decay_coef(self):
         self.decay = torch.tensor(1 - 1. / self.tau)
+    
+    def adjust_th(self):
+        x = self.v
+        mean, std = torch.mean(x), torch.std(x)
+        self.v_threshold = mean + std
 
     def forward(self, x: torch.Tensor, **kwargs):
         init = kwargs.get('init', False)
@@ -84,6 +89,7 @@ class OnlineLIFNode(LIFNode):
         self.get_decay_coef()
         self.v_float_to_tensor(x)
         self.neuronal_charge(x)
+        self.adjust_th() # newly added
         spike = self.neuronal_fire()
         self.neuronal_reset(spike)
 
