@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import sys
 from torch.cuda import amp
-from models import spiking_vgg, spiking_resnet_imagenet
+from models import spiking_resnet_SEW, spiking_vgg
 from modules import neurons, surrogate, neuron_spikingjelly
 import config
 from datasets.data import get_dataset
@@ -62,7 +62,7 @@ def main():
         net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS)
     else:
         neuron0 = neurons.OnlineLIFNode if not args.BPTT else neuron_spikingjelly.LIFNode
-        net = spiking_resnet_imagenet.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, grad_with_rate=True, v_reset=None)
+        net = spiking_resnet_SEW.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), track_rate=True, c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, grad_with_rate=True, v_reset=None)
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
     net.cuda()

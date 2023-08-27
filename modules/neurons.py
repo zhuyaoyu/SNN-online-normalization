@@ -80,12 +80,13 @@ class OnlineLIFNode(LIFNode):
         self.decay = torch.tensor(1 - 1. / self.tau)
     
     def adjust_th(self):
-        x = self.v
-        mean, std = torch.mean(x), torch.std(x)
-        if self.init:
-            self.th_ratio = (self.init_threshold - mean) / std
-            self.init = False
-        self.v_threshold = mean + std * self.th_ratio
+        with torch.no_grad():
+            x = self.v
+            mean, std = torch.mean(x), torch.std(x)
+            if self.init:
+                self.th_ratio = (self.init_threshold - mean) / std
+                self.init = False
+            self.v_threshold = mean + std * self.th_ratio
 
     def forward(self, x: torch.Tensor, **kwargs):
         init = kwargs.get('init', False)

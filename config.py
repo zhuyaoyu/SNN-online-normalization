@@ -26,6 +26,7 @@ def parse(fname):
                 'gamma': 0.1, # gamma for StepLR
                 'T_max': 300, # T_max for CosineAnnealingLR
                 'model': 'online_spiking_vgg11_ws',
+                'model_type': None,
                 'drop_rate': 0.0,
                 'stochdepth_rate': 0.0,
                 'weight_decay': 0.0,
