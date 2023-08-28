@@ -159,17 +159,20 @@ class SynapseNeuron(nn.Module):
             self.eps = config.args.eps
         
         if config.args.BN:
-            self.gamma = nn.Parameter(torch.ones(*shape))
-            self.beta = nn.Parameter(torch.zeros(*shape))
-            self.run_mean = nn.Parameter(torch.zeros(*shape), requires_grad=False)
-            self.run_var = nn.Parameter(torch.ones(*shape), requires_grad=False)
-            self.count = 0
-            self.last_training = False
-            self.mul_acc = torch.ones(*shape).cuda()
+            if config.args.weight_online_level == 1:
+                self.bn = nn.SyncBatchNorm(shape[1])
+            else:
+                self.gamma = nn.Parameter(torch.ones(*shape))
+                self.beta = nn.Parameter(torch.zeros(*shape))
+                self.run_mean = nn.Parameter(torch.zeros(*shape), requires_grad=False)
+                self.run_var = nn.Parameter(torch.ones(*shape), requires_grad=False)
+                # for estimating total mean and var
+                self.total_mean = torch.zeros(*shape).cuda()
+                self.total_var = torch.zeros(*shape).cuda()
 
-            # for estimating total mean and var
-            self.total_mean = torch.zeros(*shape).cuda()
-            self.total_var = torch.zeros(*shape).cuda()
+                self.count = 0
+                self.last_training = False
+            self.mul_acc = torch.ones(*shape).cuda()
         else:
             self.gamma, self.beta = None, None
 
@@ -179,15 +182,6 @@ class SynapseNeuron(nn.Module):
             raise TypeError(f'Type of neuron can only be Online LIF Node! Current neuron type is {neuron_class}.')
 
     def forward(self, spike, **kwargs):
-        if config.args.BN and self.training != self.last_training:
-            with torch.no_grad():
-                if self.training:
-                    rate = 1/2 * (1 + math.cos(math.pi + math.pi * self.count / config.args.epochs))
-                    # self.momentum = 0.8 + (0.95 - 0.8) * rate
-                    self.momentum = 0.95
-                    self.count += 1
-                self.last_training = self.training
-        
         init = kwargs.get('init', False)
         syn = self.synapse
         if init:
@@ -209,9 +203,20 @@ class SynapseNeuron(nn.Module):
         weight = get_weight_sws(syn.weight, self.gain, self.eps) if config.args.WS else syn.weight
         
         self.neuron.get_decay_coef()
-        if config.args.weight_online_level == 0:
-            pass
+        if config.args.weight_online_level == 1:
+            x = self.synapse(spike)
+            if config.args.BN:
+                x = self.bn(x)
+            spike = self.neuron(x)
         else:
+            if config.args.BN and self.training != self.last_training:
+                with torch.no_grad():
+                    if self.training:
+                        rate = 1/2 * (1 + math.cos(math.pi + math.pi * self.count / config.args.epochs))
+                        # self.momentum = 0.8 + (0.95 - 0.8) * rate
+                        self.momentum = 0.95
+                        self.count += 1
+                    self.last_training = self.training
             if self.type == 'conv':
                 spike = OnlineFunc.apply(spike, weight, syn.bias, self.gamma, self.beta, (syn.stride, syn.padding, syn.dilation, syn.groups), self)
             else:

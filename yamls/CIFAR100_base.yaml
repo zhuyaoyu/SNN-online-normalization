@@ -6,7 +6,6 @@ T_max: 300
 weight_decay: 0.0005
 WS: False
 BN: True
-tau_online_level: 1
 weight_online_level: 1
 data_dir: "../../datasets/cifar100/"
 dataset: "cifar100"
