@@ -4,7 +4,7 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 from . import surrogate
-from .neurons import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode
+from .neurons import OnlineIFNode, OnlineLIFNode
 import config
 import math
 
@@ -95,24 +95,6 @@ def neuron_forward(layer, x, gamma, beta):
     s_out = neuron.neuronal_fire()
     dsdu = neuron.surrogate_function.backward(torch.ones_like(s_out), neuron.v - neuron.v_threshold, neuron.surrogate_function.alpha)
     
-    lvl = config.args.tau_online_level
-    if lvl >= 3:
-        mul = get_mul(neuron.decay, s_out, neuron.v, dsdu)
-    if isinstance(neuron, OnlinePLIFNode):
-        # print('config.args.tau_online_level =', lvl)
-        if lvl == 1:
-            neuron.decay_acc = v_last
-        elif lvl == 2:
-            neuron.decay_acc = v_last + neuron.decay_acc * neuron.decay
-        elif lvl == 3:
-            neuron.decay_acc = v_last + neuron.decay_acc * torch.mean(mul)
-        elif lvl == 4:
-            dim = [0] if len(mul.shape) == 2 else [0,2,3]
-            neuron.decay_acc = v_last + neuron.decay_acc * torch.mean(mul, dim=dim, keepdim=True)
-        elif lvl == 5:
-            neuron.decay_acc = v_last + neuron.decay_acc * mul
-        else:
-            raise ValueError('Online level of tau out of range! (range: 1~5 integer)')
     
     # subtraction reset may be too strong
     # neuron.v = unnormed_v
@@ -193,11 +175,8 @@ class SynapseNeuron(nn.Module):
 
         if neuron_class == OnlineLIFNode:
             self.neuron = neuron_class(**kwargs)
-        elif neuron_class == OnlinePLIFNode:
-            # self.neuron = neuron_class(tau_shape = (1, self.out_channels, 1, 1))
-            self.neuron = neuron_class(tau_shape = (1,), **kwargs)
         else:
-            raise TypeError(f'Type of neuron can only be Online LIF Node or Online PLIF Node! Current neuron type is {neuron_class}.')
+            raise TypeError(f'Type of neuron can only be Online LIF Node! Current neuron type is {neuron_class}.')
 
     def forward(self, spike, **kwargs):
         if config.args.BN and self.training != self.last_training:
@@ -230,10 +209,13 @@ class SynapseNeuron(nn.Module):
         weight = get_weight_sws(syn.weight, self.gain, self.eps) if config.args.WS else syn.weight
         
         self.neuron.get_decay_coef()
-        if self.type == 'conv':
-            spike = OnlineFunc.apply(spike, weight, syn.bias, self.gamma, self.beta, (syn.stride, syn.padding, syn.dilation, syn.groups), self)
+        if config.args.weight_online_level == 0:
+            pass
         else:
-            spike = OnlineFunc.apply(spike, weight, syn.bias, self.gamma, self.beta, None, self)
+            if self.type == 'conv':
+                spike = OnlineFunc.apply(spike, weight, syn.bias, self.gamma, self.beta, (syn.stride, syn.padding, syn.dilation, syn.groups), self)
+            else:
+                spike = OnlineFunc.apply(spike, weight, syn.bias, self.gamma, self.beta, None, self)
         self.init = False
         return spike
 
