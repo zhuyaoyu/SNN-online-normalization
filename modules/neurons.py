@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from . import surrogate
 from .neuron_spikingjelly import IFNode, LIFNode, ParametricLIFNode
+import config
 import math
 
 class OnlineIFNode(IFNode):
@@ -80,13 +81,14 @@ class OnlineLIFNode(LIFNode):
         self.decay = torch.tensor(1 - 1. / self.tau)
     
     def adjust_th(self):
-        with torch.no_grad():
-            x = self.v
-            mean, std = torch.mean(x), torch.std(x)
-            if self.init:
-                self.th_ratio = (self.init_threshold - mean) / std
-                self.init = False
-            self.v_threshold = mean + std * self.th_ratio
+        if config.args.dynamic_threshold:
+            with torch.no_grad():
+                x = self.v
+                mean, std = torch.mean(x), torch.std(x)
+                if self.init:
+                    self.th_ratio = (self.init_threshold - mean) / std
+                    self.init = False
+                self.v_threshold = mean + std * self.th_ratio
 
     def forward(self, x: torch.Tensor, **kwargs):
         init = kwargs.get('init', False)

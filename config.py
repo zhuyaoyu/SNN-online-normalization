@@ -35,11 +35,11 @@ def parse(fname):
                 'T_train': None,
                 'loss_lambda': 0.05,
                 'online_update': False,
+                'dynamic_threshold': True,
                 'BN': False,
                 'BN_type': 'old',
                 'WS': True,
                 'BPTT': False,
-                'tau_online_level': 1, # online level of tau, 1 for baseline, 5 for max online level
                 'weight_online_level': 1, # online level of weight, 1 for baseline, 4 for max online level
                 }
     require_args = {'data_dir',
