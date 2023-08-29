@@ -186,9 +186,9 @@ class OnlineSpikingResNet(nn.Module):
         if norm_layer is None:
             need_sync = dist.is_available() and dist.is_initialized()
             if need_sync and dist.get_world_size(dist.group.WORLD) > 1:
-                norm_layer = nn.SyncBatchNorm
+                norm_layer = lambda *args, **kwargs: nn.SyncBatchNorm(momentum = 0.1 / config.args.T, *args, **kwargs)
             else:
-                norm_layer = nn.BatchNorm2d
+                norm_layer = lambda *args, **kwargs: nn.BatchNorm2d(momentum = 0.1 / config.args.T, *args, **kwargs)
         self._norm_layer = norm_layer
 
         self.inplanes = 64

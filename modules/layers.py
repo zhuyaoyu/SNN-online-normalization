@@ -160,7 +160,7 @@ class SynapseNeuron(nn.Module):
         
         if config.args.BN:
             if config.args.weight_online_level == 1:
-                self.bn = nn.SyncBatchNorm(shape[1])
+                self.bn = nn.SyncBatchNorm(num_features=shape[1], momentum=0.1/config.args.T)
             else:
                 self.gamma = nn.Parameter(torch.ones(*shape))
                 self.beta = nn.Parameter(torch.zeros(*shape))
