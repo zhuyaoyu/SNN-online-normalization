@@ -1,11 +1,11 @@
 T: 4
 tau: 2
-b: 256
+b: 192
 epochs: 100
 T_max: 100
 model: "online_spiking_resnet34"
 model_type: "SEW"
-lr: 0.1
+lr: 0.075
 weight_decay: 0.00002
 dynamic_threshold: False
 WS: False
