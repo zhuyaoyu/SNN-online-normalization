@@ -105,7 +105,7 @@ def neuron_forward(layer, x, gamma, beta):
 
     if neuron.dropout > 0.0 and neuron.training:
         s_out = neuron.mask.expand_as(s_out) * s_out
-    neuron.spike = s_out
+    neuron.record_stat(s_out)
     # return s_out, dsdu, unnormed_v, mean, var
     return s_out, dsdu
 
@@ -159,7 +159,7 @@ class SynapseNeuron(nn.Module):
             self.eps = config.args.eps
         
         if config.args.BN:
-            if config.args.weight_online_level == 1:
+            if config.args.weight_online_level == -99:
                 self.bn = nn.SyncBatchNorm(num_features=shape[1], momentum=0.1/config.args.T)
             else:
                 self.gamma = nn.Parameter(torch.ones(*shape))
@@ -203,7 +203,7 @@ class SynapseNeuron(nn.Module):
         weight = get_weight_sws(syn.weight, self.gain, self.eps) if config.args.WS else syn.weight
         
         self.neuron.get_decay_coef()
-        if config.args.weight_online_level == 1:
+        if config.args.weight_online_level == -99:
             x = self.synapse(spike)
             if config.args.BN:
                 x = self.bn(x)

@@ -150,11 +150,9 @@ class OnlineSpikingVGG(nn.Module):
         spikes = []
         for module in self.features._modules.values():
             if isinstance(module, self.single_step_neuron):
-                spike = module.spike.cpu()
-                spikes.append(spike.reshape(spike.shape[0], -1))
+                spikes.append([module.fr_all, module.dim])
             if isinstance(module, SynapseNeuron):
-                spike = module.neuron.spike.cpu()
-                spikes.append(spike.reshape(spike.shape[0], -1))
+                spikes.append([module.neuron.fr_all, module.neuron.dim])
         return spikes
 
 

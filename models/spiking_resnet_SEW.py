@@ -39,6 +39,13 @@ class SequentialModule(nn.Sequential):
                 else:
                     input = module(input)
         return input
+    
+    def get_spike(self):
+        spikes = []
+        for module in self._modules.values():
+            spikes_module = module.get_spike()
+            spikes += spikes_module
+        return spikes
 
 
 class Scale(nn.Module):
@@ -111,6 +118,14 @@ class BasicBlock(nn.Module):
         out = out + identity
 
         return out
+    
+    def get_spike(self):
+        spikes = []
+        neuron = self.convNeuron1.neuron
+        spikes.append([neuron.fr_all, neuron.dim])
+        neuron = self.convNeuron2.neuron
+        spikes.append([neuron.fr_all, neuron.dim])
+        return spikes
 
 
 class Bottleneck(nn.Module):
@@ -163,6 +178,16 @@ class Bottleneck(nn.Module):
         out = out + identity
 
         return out
+    
+    def get_spike(self):
+        spikes = []
+        neuron = self.convNeuron1.neuron
+        spikes.append([neuron.fr_all, neuron.dim])
+        neuron = self.convNeuron2.neuron
+        spikes.append([neuron.fr_all, neuron.dim])
+        neuron = self.convNeuron3.neuron
+        spikes.append([neuron.fr_all, neuron.dim])
+        return spikes
 
 
 class OnlineSpikingResNet(nn.Module):
@@ -288,7 +313,12 @@ class OnlineSpikingResNet(nn.Module):
         return x
     
     def get_spike(self):
-        raise NotImplementedError('get_spike not implemented now!')
+        spikes = []
+        spikes += self.layer1.get_spike()
+        spikes += self.layer2.get_spike()
+        spikes += self.layer3.get_spike()
+        spikes += self.layer4.get_spike()
+        return spikes
 
 
 def _online_spiking_resnet(arch, block, layers, pretrained, progress, single_step_neuron, **kwargs):

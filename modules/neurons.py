@@ -104,9 +104,13 @@ class OnlineLIFNode(LIFNode):
 
         if self.dropout > 0.0 and self.training:
             spike = self.mask.expand_as(spike) * spike
-
-        self.spike = spike
+        self.record_stat(spike)
         return spike
+    
+    def record_stat(self, spike):
+        B = spike.shape[0]
+        self.fr_all = torch.sum(torch.mean(spike.reshape(B, -1), dim=1)).cpu().item()
+        self.dim = spike.numel() // B
 
 
 class MyLIFNode(LIFNode):
