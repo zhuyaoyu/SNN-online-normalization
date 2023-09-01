@@ -7,7 +7,6 @@ weight_decay: 0.0005
 lr: 0.2
 WS: False
 BN: True
-weight_online_level: 1
 data_dir: "../../datasets/cifar100/"
 dataset: "cifar100"
 out_dir: "logs/cifar100"

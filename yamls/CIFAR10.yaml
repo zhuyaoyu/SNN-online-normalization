@@ -1,4 +1,4 @@
-T: 6 
+T: 4
 tau: 2
 b: 128
 epochs: 100
@@ -7,8 +7,6 @@ lr: 0.1
 weight_decay: 0.0005
 WS: False
 BN: True
-tau_online_level: 1
-weight_online_level: 1
 data_dir: "../../datasets/cifar10/"
 dataset: "cifar10"
 out_dir: "logs/cifar10"

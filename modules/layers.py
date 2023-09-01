@@ -66,80 +66,6 @@ class ScaledWSConv2d(nn.Conv2d):
         return F.conv2d(x, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
 
-@torch.jit.script
-def get_mul(decay, s_out, v, dsdu):
-    with torch.no_grad():
-        # res = decay * (1 - s_out - v * dsdu)
-        res = torch.tensor(decay)
-    return res
-
-
-def neuron_forward(layer, x, gamma, beta):
-    neuron = layer.neuron
-    v_last = neuron.v
-    neuron.v_float_to_tensor(x)
-    neuron.neuronal_charge(x)
-    neuron.adjust_th() # newly added
-    
-    # unnormed_v = neuron.v
-    # if config.args.BN:
-    #     if layer.training:
-    #         neuron.v, mean, var = bn_forward(neuron.v, gamma, beta, layer)
-    #     else:
-    #         neuron.v = (neuron.v - layer.run_mean) / torch.sqrt(layer.run_var + config.args.eps)
-    #         neuron.v = neuron.v * gamma + beta
-    #         mean, var = None, None
-    #     a1 = gamma / torch.sqrt(layer.run_var + config.args.eps)
-    #     a0 = beta - layer.run_mean * a1
-    
-    s_out = neuron.neuronal_fire()
-    dsdu = neuron.surrogate_function.backward(torch.ones_like(s_out), neuron.v - neuron.v_threshold, neuron.surrogate_function.alpha)
-    
-    
-    # subtraction reset may be too strong
-    # neuron.v = unnormed_v
-    if 0:#config.args.BN:
-        neuron.v = neuron.v - s_out * (neuron.v_threshold - a0) / a1
-    else:
-        neuron.neuronal_reset(s_out)
-
-    if neuron.dropout > 0.0 and neuron.training:
-        s_out = neuron.mask.expand_as(s_out) * s_out
-    neuron.record_stat(s_out)
-    # return s_out, dsdu, unnormed_v, mean, var
-    return s_out, dsdu
-
-
-@torch.jit.script
-def get_inputs(s_in, s_in_acc, decay, v, s_out, dsdu, lvl):
-    lvl = lvl.item()
-    if lvl == 1:
-        mul = torch.tensor(0.)
-    elif lvl == 2:
-        mul = torch.mean(decay)
-    elif lvl == 3:
-        mul = get_mul(decay, s_out, v, dsdu)
-        mul = torch.mean(mul)
-    elif lvl == 4:
-        mul = get_mul(decay, s_out, v, dsdu)
-        dims = [0] if len(mul.shape) <= 2 else [0,2,3]
-        mul = torch.mean(mul, dim=dims, keepdim=True)
-    else:
-        mul = torch.tensor(0.)
-        raise ValueError('Online level of weight out of range! (range: 1~4 integer)')
-    
-    s_in_acc *= mul
-    s_in_acc += s_in
-    return s_in_acc
-
-
-def calc_grad_w(grad_w_func, grad_u, s_in, s_in_acc, decay, v, s_out, dsdu, lvl):
-    inputs = get_inputs(s_in, s_in_acc, decay, v, s_out, dsdu, torch.tensor(lvl))
-    # might change code here??
-    grad_weight = grad_w_func(grad_u, inputs)
-    return grad_weight
-
-
 class SynapseNeuron(nn.Module):
     def __init__(self, synapse=None, neuron_class=OnlineLIFNode, **kwargs):
         super().__init__()
@@ -159,22 +85,8 @@ class SynapseNeuron(nn.Module):
             self.eps = config.args.eps
         
         if config.args.BN:
-            if config.args.weight_online_level == -99:
-                self.bn = nn.SyncBatchNorm(num_features=shape[1], momentum=0.1/config.args.T)
-            else:
-                self.gamma = nn.Parameter(torch.ones(*shape))
-                self.beta = nn.Parameter(torch.zeros(*shape))
-                self.run_mean = nn.Parameter(torch.zeros(*shape), requires_grad=False)
-                self.run_var = nn.Parameter(torch.ones(*shape), requires_grad=False)
-                # for estimating total mean and var
-                self.total_mean = torch.zeros(*shape).cuda()
-                self.total_var = torch.zeros(*shape).cuda()
-
-                self.count = 0
-                self.last_training = False
-            self.mul_acc = torch.ones(*shape).cuda()
-        else:
-            self.gamma, self.beta = None, None
+            self.bn = MySyncBN(num_features=shape[1])
+            # self.bn = nn.SyncBatchNorm(num_features=shape[1], momentum=0.1/config.args.T)
 
         if neuron_class == OnlineLIFNode:
             self.neuron = neuron_class(**kwargs)
@@ -196,102 +108,55 @@ class SynapseNeuron(nn.Module):
                 shape[-1] = syn.out_features
             
             self.neuron.forward_init(spike, shape=shape)
-            self.s_in_acc = torch.zeros_like(spike, requires_grad=False)
-            if config.args.BN:
-                self.mul_acc = torch.ones_like(self.mul_acc)
 
-        weight = get_weight_sws(syn.weight, self.gain, self.eps) if config.args.WS else syn.weight
+        # weight = get_weight_sws(syn.weight, self.gain, self.eps) if config.args.WS else syn.weight
         
         self.neuron.get_decay_coef()
-        if config.args.weight_online_level == -99:
-            x = self.synapse(spike)
-            if config.args.BN:
-                x = self.bn(x)
-            spike = self.neuron(x)
-        else:
-            if config.args.BN and self.training != self.last_training:
-                with torch.no_grad():
-                    if self.training:
-                        rate = 1/2 * (1 + math.cos(math.pi + math.pi * self.count / config.args.epochs))
-                        # self.momentum = 0.8 + (0.95 - 0.8) * rate
-                        self.momentum = 0.95
-                        self.count += 1
-                    self.last_training = self.training
-            if self.type == 'conv':
-                spike = OnlineFunc.apply(spike, weight, syn.bias, self.gamma, self.beta, (syn.stride, syn.padding, syn.dilation, syn.groups), self)
-            else:
-                spike = OnlineFunc.apply(spike, weight, syn.bias, self.gamma, self.beta, None, self)
+        x = self.synapse(spike)
+        if config.args.BN:
+            x = self.bn(x, **kwargs)
+            # x = self.bn(x)
+        spike = self.neuron(x)
         self.init = False
         return spike
 
 
-class OnlineFunc(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, s_in, weight, bias, gamma, beta, convConfig, layer):
-        # print(dist.get_rank(), weight.shape, torch.mean(weight), torch.var(weight))
-        # need du/du (decay), du/ds (reset) and ds/du (surrogate)
-        if layer.type == 'conv':
-            x = F.conv2d(s_in, weight, bias, *convConfig)
-            ctx.convConfig = convConfig
-        else:
-            x = F.linear(s_in, weight, bias)
-        
-        if config.args.BN:
-            unnormed_x = x
-            x, mean, var = bn_forward(x, gamma, beta, layer)
-        s_out, dsdu = neuron_forward(layer, x, gamma, beta)
-        # s_out, dsdu, unnormed_x, mean, var = neuron_forward(layer, x, gamma, beta)
+class MySyncBN(nn.Module):
+    def __init__(self, num_features):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(num_features))
+        self.beta = nn.Parameter(torch.zeros(num_features))
+        self.run_mean = nn.Parameter(torch.zeros(num_features), requires_grad=False)
+        self.run_var = nn.Parameter(torch.ones(num_features), requires_grad=False)
+        # for estimating total mean and var
+        self.total_mean = torch.zeros(num_features).cuda()
+        self.total_var = torch.zeros(num_features).cuda()
+        self.momentum = 0.95
 
+        self.last_training = False
+
+    def forward(self, x, **kwargs):
+        self.init = kwargs.get('init', False)
+        return BNFunc.apply(x, self.gamma, self.beta, self)
+        
+
+class BNFunc(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, gamma, beta, layer):
+        # print(dist.get_rank(), weight.shape, torch.mean(weight), torch.var(weight))
+        unnormed_x = x
+        x, mean, var = bn_forward(x, gamma, beta, layer)
         ctx.layer = layer
-        if config.args.BN and layer.training:
-            ctx.save_for_backward(s_in, weight, s_out, dsdu, unnormed_x, gamma, mean, var)
-        else:
-            ctx.save_for_backward(s_in, weight, s_out, dsdu)
-        return s_out
+        ctx.save_for_backward(unnormed_x, gamma, mean, var)
+        return x
 
     @staticmethod
     def backward(ctx, grad):
         # shape of grad: B*C*H*W
-        layer = ctx.layer
-        neuron = layer.neuron
-        if config.args.BN:
-            (s_in, weight, s_out, dsdu, x, gamma, mean, var) = ctx.saved_tensors
-        else:
-            (s_in, weight, s_out, dsdu) = ctx.saved_tensors
-
-        grad_u = grad * dsdu
-
-        if config.args.BN:
-            var1 = layer.run_var if config.args.BN_type == 'new' else var
-            grad_w_, grad_I, grad_gamma, grad_beta = bn_backward(grad_u, x, gamma, mean, var, var1, torch.tensor(config.args.eps))
-        else:
-            grad_w_, grad_I, grad_gamma, grad_beta = grad_u, grad_u, None, None
-        grad_b = torch.sum(grad_I, dim=[i for i in range(len(grad_u.shape)) if i != 1], keepdim=False)
-
-        if layer.type == 'conv':
-            stride, padding, dilation, groups = ctx.convConfig
-            grad_input = conv_backward_input(grad_I, s_in, weight, padding, stride, dilation, groups)
-            grad_w_func = lambda grad_output, input: conv_backward_weight(grad_output, input, weight, padding, stride, dilation, groups)
-        else:
-            grad_input = torch.matmul(grad_I, weight)
-            grad_w_func = lambda grad_output, input: torch.matmul(grad_output.transpose(1,2), input)
-        # grad_weight = calc_grad_w(grad_w_func, grad_I, s_in, layer.s_in_acc, neuron.decay, neuron.v, s_out, dsdu, config.args.weight_online_level)
-        grad_weight = calc_grad_w(grad_w_func, grad_w_, s_in, layer.s_in_acc, neuron.decay, neuron.v, s_out, dsdu, config.args.weight_online_level)
-
-        if config.args.BN and config.args.weight_online_level >= 2:
-            align_scale(layer.mul_acc, get_mul(neuron.decay, None, None, None), grad_weight)
-
-        return grad_input, grad_weight, grad_b, grad_gamma, grad_beta, None, None
-
-
-@torch.jit.script
-def align_scale(mul_acc, decay, grad_weight):
-    mul_acc *= decay
-    mul_acc += 1
-    grad_weight /= mul_acc.transpose(0,1)
-    # grad_b *= layer.mul_acc
-    # grad_gamma *= layer.mul_acc
-    # grad_beta *= layer.mul_acc
+        (x, gamma, mean, var) = ctx.saved_tensors
+        var1 = ctx.layer.run_var if config.args.BN_type == 'new' else var
+        grad_x, grad_gamma, grad_beta = bn_backward(grad, x, gamma, mean, var, var1, torch.tensor(config.args.eps))
+        return grad_x, grad_gamma, grad_beta, None, None
 
 
 def bn_forward(x, gamma, beta, layer):
@@ -316,13 +181,11 @@ def bn_forward(x, gamma, beta, layer):
                 mean, invstd = get_norm_stat_ddp(x, layer, process_group, config.args.eps)
                 bn_num = x.numel() / x.shape[1]
                 var = ((1. / invstd) ** 2 - config.args.eps) * (1 - 1. / bn_num)
-                shape = [1 for _ in x.shape]
-                shape[1] = x.shape[1]
-                mean, var = mean.reshape(shape), var.reshape(shape)
         
         if mean is None:
             mean = torch.mean(x, dim=dims, keepdim=True)
-            var = torch.mean((x-mean)**2, dim=dims, keepdim=True)
+            var = torch.mean((x-mean)**2, dim=dims)
+            mean = mean.reshape(-1)
         
         layer.total_mean += mean
         layer.total_var += var
@@ -341,7 +204,8 @@ def bn_forward(x, gamma, beta, layer):
 
 @torch.jit.script
 def calc_bn(x, mean, var, eps, gamma, beta):
-    return (x - mean) / torch.sqrt(var + eps) * gamma + beta
+    shape = [1, -1, 1, 1] if len(x.shape) == 4 else [1, -1]
+    return (x - mean.reshape(shape)) / torch.sqrt(var.reshape(shape) + eps) * gamma.reshape(shape) + beta.reshape(shape)
 
 
 @torch.jit.script
@@ -349,16 +213,16 @@ def bn_backward(grad_x, x, gamma, mean, var, var1, eps):
     gamma = gamma * var / var1
 
     dims = [0] if len(x.shape) == 2 else [0,2,3]
-    std_inv = 1 / torch.sqrt(var + eps)
-    x = (x - mean) * std_inv
-    grad_beta = torch.sum(grad_x, dim=dims, keepdim=True)
-    grad_gamma = torch.sum((grad_x * x), dim=dims, keepdim=True)
-    grad_x = grad_x * gamma * std_inv
+    shape = [1, -1, 1, 1] if len(x.shape) == 4 else [1, -1]
+    std_inv = 1 / torch.sqrt(var + eps).reshape(shape)
+    x = (x - mean.reshape(shape)) * std_inv
+    grad_beta = torch.sum(grad_x, dim=dims)
+    grad_gamma = torch.sum((grad_x * x), dim=dims)
+    grad_x = grad_x * gamma.reshape(shape) * std_inv
     m = x.numel() // x.shape[1]
     
-    grad_w_ = grad_x - torch.sum(grad_x, dim=dims, keepdim=True) / m - torch.sum(grad_x * x, dim=dims, keepdim=True) * x / m
-    grad_x = grad_w_
-    return grad_w_, grad_x, grad_gamma, grad_beta
+    grad_x = grad_x - torch.sum(grad_x, dim=dims, keepdim=True) / m - torch.sum(grad_x * x, dim=dims, keepdim=True) * x / m
+    return grad_x, grad_gamma, grad_beta
 
 
 def get_norm_stat_ddp(input, layer, process_group, eps):

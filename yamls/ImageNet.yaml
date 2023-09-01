@@ -9,7 +9,6 @@ lr: 0.1
 weight_decay: 0.00002
 WS: False
 BN: True
-weight_online_level: 1
 data_dir: "/home/data/public/ImageNet/"
 dataset: "imagenet"
 out_dir: "logs/imagenet"
