@@ -144,25 +144,8 @@ class BNFunc(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, gamma, beta, layer):
         # print(dist.get_rank(), weight.shape, torch.mean(weight), torch.var(weight))
-        unnormed_x = x
-        x, mean, var = bn_forward(x, gamma, beta, layer)
-        ctx.layer = layer
-        ctx.save_for_backward(unnormed_x, gamma, mean, var)
-        return x
-
-    @staticmethod
-    def backward(ctx, grad):
-        # shape of grad: B*C*H*W
-        (x, gamma, mean, var) = ctx.saved_tensors
-        var1 = ctx.layer.run_var if config.args.BN_type == 'new' else var
-        grad_x, grad_gamma, grad_beta = bn_backward(grad, x, gamma, mean, var, var1, torch.tensor(config.args.eps))
-        return grad_x, grad_gamma, grad_beta, None, None
-
-
-def bn_forward(x, gamma, beta, layer):
-    dims = [0] if len(x.shape) == 2 else [0,2,3]
-    if layer.training:
-        if layer.init:
+        eps = config.args.eps
+        if layer.training and layer.init:
             T = config.args.T_train if layer.training else config.args.T
             mean = layer.total_mean / T
             var = layer.total_var / T
@@ -178,56 +161,56 @@ def bn_forward(x, gamma, beta, layer):
         if need_sync:
             process_group = dist.group.WORLD
             if dist.get_world_size(process_group) > 1:
-                mean, invstd = get_norm_stat_ddp(x, layer, process_group, config.args.eps)
-                bn_num = x.numel() / x.shape[1]
-                var = ((1. / invstd) ** 2 - config.args.eps) * (1 - 1. / bn_num)
+                mean, invstd, count_all = get_norm_stat_ddp(x, layer, process_group, eps)
+                var = ((1. / invstd) ** 2 - eps)
         
         if mean is None:
-            mean = torch.mean(x, dim=dims, keepdim=True)
-            var = torch.mean((x-mean)**2, dim=dims)
-            mean = mean.reshape(-1)
+            if layer.training:
+                mean, invstd = torch.batch_norm_stats(x, eps)
+                var = ((1. / invstd) ** 2 - eps)
+            else:
+                mean, invstd = layer.run_mean, 1. / torch.sqrt(layer.run_var + eps)
+            count_all = torch.full((1,), x.numel() // x.size(1), dtype = mean.dtype, device=mean.device)
         
-        layer.total_mean += mean
-        layer.total_var += var
-        if config.args.BN_type == 'new': layer.total_var += mean ** 2
+        if layer.training:
+            layer.total_mean += mean
+            layer.total_var += var
+            if config.args.BN_type == 'new': layer.total_var += mean ** 2
 
-    if layer.training:
-        if config.args.BN_type == 'old':
-            x = calc_bn(x, mean, var, torch.tensor(config.args.eps), gamma, beta)
-        else:
-            x = calc_bn(x, layer.run_mean, layer.run_var, torch.tensor(config.args.eps), gamma, beta)
-    else:
-        x = calc_bn(x, layer.run_mean, layer.run_var, torch.tensor(config.args.eps), gamma, beta)
-        mean, var = None, None
-    return x, mean, var
+        ctx.layer = layer
+        ctx.save_for_backward(x, gamma, mean, invstd, count_all.to(torch.int32))
+        if layer.training and config.args.BN_type == 'new':
+            mean = layer.run_mean
+            invstd = 1. / torch.sqrt(layer.run_var + eps)
+        return torch.batch_norm_elemt(x, gamma, beta, mean, invstd, eps)
 
+    @staticmethod
+    def backward(ctx, grad):
+        # shape of grad: B*C*H*W
+        (x, gamma, mean, invstd, count_tensor) = ctx.saved_tensors
+        if config.args.BN_type == 'new':
+            gamma = gamma / invstd * 1. / torch.sqrt(ctx.layer.run_var + config.args.eps)
+        sum_dy, sum_dy_xmu, grad_gamma, grad_beta = torch.batch_norm_backward_reduce(grad, x, mean, invstd, gamma, True, True, True)
 
-@torch.jit.script
-def calc_bn(x, mean, var, eps, gamma, beta):
-    shape = [1, -1, 1, 1] if len(x.shape) == 4 else [1, -1]
-    return (x - mean.reshape(shape)) / torch.sqrt(var.reshape(shape) + eps) * gamma.reshape(shape) + beta.reshape(shape)
+        # synchronizing stats used to calculate input gradient.
+        if dist.is_available() and dist.is_initialized():
+            process_group = dist.group.WORLD
+            if dist.get_world_size(process_group) > 1:
+                num_channels = sum_dy.shape[0]
+                combined = torch.cat([sum_dy, sum_dy_xmu], dim=0)
+                torch.distributed.all_reduce(combined, torch.distributed.ReduceOp.SUM, process_group, async_op=False)
+                sum_dy, sum_dy_xmu = torch.split(combined, num_channels)
 
-
-@torch.jit.script
-def bn_backward(grad_x, x, gamma, mean, var, var1, eps):
-    gamma = gamma * var / var1
-
-    dims = [0] if len(x.shape) == 2 else [0,2,3]
-    shape = [1, -1, 1, 1] if len(x.shape) == 4 else [1, -1]
-    std_inv = 1 / torch.sqrt(var + eps).reshape(shape)
-    x = (x - mean.reshape(shape)) * std_inv
-    grad_beta = torch.sum(grad_x, dim=dims)
-    grad_gamma = torch.sum((grad_x * x), dim=dims)
-    grad_x = grad_x * gamma.reshape(shape) * std_inv
-    m = x.numel() // x.shape[1]
-    
-    grad_x = grad_x - torch.sum(grad_x, dim=dims, keepdim=True) / m - torch.sum(grad_x * x, dim=dims, keepdim=True) * x / m
-    return grad_x, grad_gamma, grad_beta
+        # backward pass for gradient calculation
+        if gamma is not None and gamma.dtype != mean.dtype:
+            gamma = gamma.to(mean.dtype)
+        grad_x = torch.batch_norm_backward_elemt(grad, x, mean, invstd, gamma, sum_dy, sum_dy_xmu, count_tensor)
+        
+        return grad_x, grad_gamma, grad_beta, None, None
 
 
 def get_norm_stat_ddp(input, layer, process_group, eps):
     world_size = dist.get_world_size(process_group)
-    mean, invstd = torch.batch_norm_stats(input, eps)
 
     num_channels = input.shape[1]
     if input.numel() > 0:
@@ -254,7 +237,7 @@ def get_norm_stat_ddp(input, layer, process_group, eps):
             device=input.device
         )
 
-    if process_group._get_backend_name() == 'nccl':
+    if process_group._get_backend_name() != "gloo":
         # world_size * (2C + 1)
         combined_size = combined.numel()
         combined_flat = torch.empty(1,
@@ -288,8 +271,7 @@ def get_norm_stat_ddp(input, layer, process_group, eps):
     if running_mean is not None and counts.dtype != running_mean.dtype:
         counts = counts.to(running_mean.dtype)
     mean, invstd = torch.batch_norm_gather_stats_with_counts(
-        # input, mean_all, invstd_all, running_mean, running_var, momentum, eps, counts,
-        input, mean_all, invstd_all, None, None, momentum, eps, counts,
+        input, mean_all, invstd_all, running_mean, running_var, momentum, eps, counts,
     )
 
-    return mean, invstd
+    return mean, invstd, count_all

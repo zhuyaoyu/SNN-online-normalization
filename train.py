@@ -137,7 +137,7 @@ def main():
 
 
     if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
+        os.makedirs(out_dir, exist_ok=True)
         print(f'Mkdir {out_dir}.')
     else:
         print(out_dir)
@@ -146,7 +146,7 @@ def main():
     # pt_dir = out_dir + '_pt'
     pt_dir = out_dir
     if not os.path.exists(pt_dir):
-        os.makedirs(pt_dir)
+        os.makedirs(pt_dir, exist_ok=True)
         print(f'Mkdir {pt_dir}.')
 
 
