@@ -19,16 +19,16 @@ if torch.__version__ < "1.11.0":
         cpp_wrapper.cudnn_convolution_backward_input(input.shape, grad_output, weight, padding, stride, dilation, groups,
                                                      cudnn.benchmark, cudnn.deterministic, cudnn.allow_tf32)
     conv_backward_weight = lambda grad_output, input, weight, padding, stride, dilation, groups: \
-        cpp_wrapper.cudnn_convolution_backward_weight(weight.shape, grad_output, input, padding, stride, dilation, groups, 
+        cpp_wrapper.cudnn_convolution_backward_weight(weight.shape, grad_output, input, padding, stride, dilation, groups,
                                                       cudnn.benchmark, cudnn.deterministic, cudnn.allow_tf32)
 else:
     bias_sizes, output_padding = [0, 0, 0, 0], [0, 0]
     transposed = False
     conv_backward_input = lambda grad_output, input, weight, padding, stride, dilation, groups: \
-        torch.ops.aten.convolution_backward(grad_output, input, weight, bias_sizes, stride, padding, dilation, 
+        torch.ops.aten.convolution_backward(grad_output, input, weight, bias_sizes, stride, padding, dilation,
                                             transposed, output_padding, groups, [True, False, False])[0]
     conv_backward_weight = lambda grad_output, input, weight, padding, stride, dilation, groups: \
-        torch.ops.aten.convolution_backward(grad_output, input, weight, bias_sizes, stride, padding, dilation, 
+        torch.ops.aten.convolution_backward(grad_output, input, weight, bias_sizes, stride, padding, dilation,
                                             transposed, output_padding, groups, [False, True, False])[1]
 
 
@@ -83,7 +83,7 @@ class SynapseNeuron(nn.Module):
         if config.args.WS:
             self.gain = nn.Parameter(torch.ones(*shape)).transpose(0,1).cuda()
             self.eps = config.args.eps
-        
+
         if config.args.BN:
             self.bn = MySyncBN(num_features=shape[1])
             # self.bn = nn.SyncBatchNorm(num_features=shape[1], momentum=0.1/config.args.T)
@@ -106,11 +106,11 @@ class SynapseNeuron(nn.Module):
             else:
                 shape = list(spike.shape)
                 shape[-1] = syn.out_features
-            
+
             self.neuron.forward_init(spike, shape=shape)
 
         # weight = get_weight_sws(syn.weight, self.gain, self.eps) if config.args.WS else syn.weight
-        
+
         self.neuron.get_decay_coef()
         x = self.synapse(spike)
         if config.args.BN:
@@ -138,7 +138,7 @@ class MySyncBN(nn.Module):
     def forward(self, x, **kwargs):
         self.init = kwargs.get('init', False)
         return BNFunc.apply(x, self.gamma, self.beta, self)
-        
+
 
 class BNFunc(torch.autograd.Function):
     @staticmethod
@@ -155,23 +155,23 @@ class BNFunc(torch.autograd.Function):
             layer.total_mean = 0.
             layer.total_var = 0.
 
-        mean, var = None, None
-        # BN sync, refer to torch.nn.modules.batchnorm.SyncBatchNorm and torch.nn.modules._function.SyncBatchNorm
-        need_sync = dist.is_available() and dist.is_initialized()
-        if need_sync:
-            process_group = dist.group.WORLD
-            if dist.get_world_size(process_group) > 1:
-                mean, invstd, count_all = get_norm_stat_ddp(x, layer, process_group, eps)
-                var = ((1. / invstd) ** 2 - eps)
-        
-        if mean is None:
-            if layer.training:
+        mean, var, count_all = None, None, None
+        if layer.training:
+            # BN sync, refer to torch.nn.modules.batchnorm.SyncBatchNorm and torch.nn.modules._function.SyncBatchNorm
+            need_sync = dist.is_available() and dist.is_initialized()
+            if need_sync:
+                process_group = dist.group.WORLD
+                if dist.get_world_size(process_group) > 1:
+                    mean, invstd, count_all = get_norm_stat_ddp(x, layer, process_group, eps)
+                    var = ((1. / invstd) ** 2 - eps)
+            if mean is None:
                 mean, invstd = torch.batch_norm_stats(x, eps)
                 var = ((1. / invstd) ** 2 - eps)
-            else:
-                mean, invstd = layer.run_mean, 1. / torch.sqrt(layer.run_var + eps)
+        else:
+            mean, invstd = layer.run_mean, 1. / torch.sqrt(layer.run_var + eps)
+        if count_all is None:
             count_all = torch.full((1,), x.numel() // x.size(1), dtype = mean.dtype, device=mean.device)
-        
+
         if layer.training:
             layer.total_mean += mean
             layer.total_var += var
@@ -205,7 +205,7 @@ class BNFunc(torch.autograd.Function):
         if gamma is not None and gamma.dtype != mean.dtype:
             gamma = gamma.to(mean.dtype)
         grad_x = torch.batch_norm_backward_elemt(grad, x, mean, invstd, gamma, sum_dy, sum_dy_xmu, count_tensor)
-        
+
         return grad_x, grad_gamma, grad_beta, None, None
 
 
