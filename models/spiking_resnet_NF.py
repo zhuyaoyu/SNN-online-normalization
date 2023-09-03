@@ -5,7 +5,7 @@ from torch import Tensor
 from typing import Any, Callable, List, Optional, Type, Union
 from modules import neuron_spikingjelly
 from modules.neurons import OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, MyLIFNode
-from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron
+from modules.layers import ScaledWSConv2d, ScaledWSLinear, SynapseNeuron, MySyncBN
 import torch.distributed as dist
 import config
 
@@ -90,17 +90,16 @@ class BasicBlock(nn.Module):
 
         out = self.sn1(x, **kwargs)
         out = self.conv1(out)
-        out = self.bn1(out)
+        out = self.bn1(out, **kwargs)
         
         out = self.sn2(out, **kwargs)
         out = self.conv2(out)
-        out = self.bn2(out) # put here or after?
+        out = self.bn2(out, **kwargs)
         
         if self.downsample is not None:
             identity = self.downsample(x, **kwargs)
 
         out = out + identity
-        # out = self.bn2(out)
 
         return out
 
@@ -150,15 +149,15 @@ class Bottleneck(nn.Module):
 
         out = self.sn1(x, **kwargs)
         out = self.conv1(out)
-        out = self.bn1(out)
+        out = self.bn1(out, **kwargs)
         
         out = self.sn2(out, **kwargs)
         out = self.conv2(out)
-        out = self.bn2(out)
+        out = self.bn2(out, **kwargs)
         
         out = self.sn3(out, **kwargs)
         out = self.conv3(out)
-        out = self.bn3(out) # put here or after?
+        out = self.bn3(out, **kwargs)
 
         if self.downsample is not None:
             identity = self.downsample(x, **kwargs)
@@ -184,11 +183,12 @@ class OnlineSpikingResNet(nn.Module):
     ) -> None:
         super().__init__()
         if norm_layer is None:
-            need_sync = dist.is_available() and dist.is_initialized()
-            if need_sync and dist.get_world_size(dist.group.WORLD) > 1:
-                norm_layer = lambda *args, **kwargs: nn.SyncBatchNorm(momentum = 0.1 / config.args.T, *args, **kwargs)
-            else:
-                norm_layer = lambda *args, **kwargs: nn.BatchNorm2d(momentum = 0.1 / config.args.T, *args, **kwargs)
+            norm_layer = MySyncBN
+            # need_sync = dist.is_available() and dist.is_initialized()
+            # if need_sync and dist.get_world_size(dist.group.WORLD) > 1:
+            #     norm_layer = lambda *args, **kwargs: nn.SyncBatchNorm(momentum = 0.1 / config.args.T, *args, **kwargs)
+            # else:
+            #     norm_layer = lambda *args, **kwargs: nn.BatchNorm2d(momentum = 0.1 / config.args.T, *args, **kwargs)
         self._norm_layer = norm_layer
 
         self.inplanes = 64
@@ -279,7 +279,7 @@ class OnlineSpikingResNet(nn.Module):
 
     def forward(self, x: Tensor, **kwargs) -> Tensor:
         x = self.conv1(x)
-        x = self.bn1(x)
+        x = self.bn1(x, **kwargs)
         x = self.maxpool(x)
 
         x = self.layer1(x, **kwargs)
