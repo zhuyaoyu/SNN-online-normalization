@@ -119,6 +119,8 @@ def main():
         max_test_acc = checkpoint['max_test_acc']
 
     out_dir = os.path.join(args.out_dir, f'{args.model}_{args.cnf}_T_{args.T}_T_train_{args.T_train}_{args.opt}_lr_{args.lr}_tau_{args.tau}_wlvl_{args.weight_online_level}_')
+    if args.model_type is not None:
+        out_dir += args.model_type + '_'
     if args.WS:
         out_dir += 'WS_'
     if args.BN:

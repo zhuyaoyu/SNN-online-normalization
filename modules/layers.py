@@ -163,10 +163,10 @@ class BNFunc(torch.autograd.Function):
                 process_group = dist.group.WORLD
                 if dist.get_world_size(process_group) > 1:
                     mean, invstd, count_all = get_norm_stat_ddp(x, layer, process_group, eps)
-                    var = ((1. / invstd) ** 2 - eps)
+                    var = (1. / invstd) ** 2 - eps
             if mean is None:
                 mean, invstd = torch.batch_norm_stats(x, eps)
-                var = ((1. / invstd) ** 2 - eps)
+                var = (1. / invstd) ** 2 - eps
         else:
             mean, invstd = layer.run_mean, 1. / torch.sqrt(layer.run_var + eps)
         if count_all is None:
@@ -271,7 +271,7 @@ def get_norm_stat_ddp(input, layer, process_group, eps):
     if running_mean is not None and counts.dtype != running_mean.dtype:
         counts = counts.to(running_mean.dtype)
     mean, invstd = torch.batch_norm_gather_stats_with_counts(
-        input, mean_all, invstd_all, running_mean, running_var, momentum, eps, counts,
+        input, mean_all, invstd_all, None, None, momentum, eps, counts,
     )
 
     return mean, invstd, count_all
