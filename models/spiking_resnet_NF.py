@@ -32,7 +32,7 @@ class SequentialModule(nn.Sequential):
 
     def forward(self, input, **kwargs):
         for module in self._modules.values():
-            if isinstance(module, (OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, SynapseNeuron, BasicBlock, Bottleneck)):
+            if isinstance(module, (OnlineIFNode, OnlineLIFNode, OnlinePLIFNode, MySyncBN, SynapseNeuron, BasicBlock, Bottleneck)):
                 input = module(input, **kwargs)
             else:
                 if isinstance(module, neuron_spikingjelly.BaseNode):
@@ -251,7 +251,7 @@ class OnlineSpikingResNet(nn.Module):
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = SequentialModule(
                 conv1x1(self.inplanes, planes * block.expansion, stride),
-                self._norm_layer(planes * block.expansion),
+                norm_layer(planes * block.expansion),
             )
 
         layers = []
