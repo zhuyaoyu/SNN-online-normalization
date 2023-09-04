@@ -60,6 +60,7 @@ def parse(fname):
     args.tau = float(args.tau)
     if args.T_train is None:
         args.T_train = args.T
+    args.BN_type = args.BN_type.lower()
     assert(args.BN_type in ['old', 'new'])
 
     if dist.is_available() and dist.is_initialized():

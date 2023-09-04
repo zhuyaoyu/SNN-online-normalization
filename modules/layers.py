@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from . import surrogate
 from .neurons import OnlineIFNode, OnlineLIFNode
 import config
-import math
+import copy
 
 import torch.backends.cudnn as cudnn
 from torch.utils.cpp_extension import load_inline, load
@@ -126,11 +126,11 @@ class MySyncBN(nn.Module):
         super().__init__()
         self.gamma = nn.Parameter(torch.ones(num_features))
         self.beta = nn.Parameter(torch.zeros(num_features))
-        self.run_mean = nn.Parameter(torch.zeros(num_features), requires_grad=False)
-        self.run_var = nn.Parameter(torch.ones(num_features), requires_grad=False)
+        self.register_buffer('run_mean', torch.zeros(num_features))
+        self.register_buffer('run_var', torch.ones(num_features))
         # for estimating total mean and var
-        self.total_mean = torch.zeros(num_features).cuda()
-        self.total_var = torch.zeros(num_features).cuda()
+        self.total_mean = 0.
+        self.total_var = 0.
         self.momentum = 0.9
 
         self.last_training = False
@@ -145,7 +145,7 @@ class BNFunc(torch.autograd.Function):
     def forward(ctx, x, gamma, beta, layer):
         # print(dist.get_rank(), weight.shape, torch.mean(weight), torch.var(weight))
         eps = config.args.eps
-        if layer.training and layer.init or not layer.training and isinstance(layer.total_var, torch.Tensor):
+        if (layer.training and layer.init or not layer.training) and isinstance(layer.total_var, torch.Tensor):
             T = config.args.T_train if layer.training else config.args.T
             mean = layer.total_mean / T
             var = layer.total_var / T
@@ -180,16 +180,17 @@ class BNFunc(torch.autograd.Function):
         ctx.layer = layer
         ctx.save_for_backward(x, gamma, mean, invstd, count_all.to(torch.int32))
         if layer.training and config.args.BN_type == 'new':
-            mean = layer.run_mean
-            invstd = 1. / torch.sqrt(layer.run_var + eps)
-        return torch.batch_norm_elemt(x, gamma, beta, mean, invstd, eps)
+            if torch.abs(torch.mean((1. / invstd)**2 - layer.run_var)) < 0.5:
+                mean, invstd = layer.run_mean, 1. / torch.sqrt(layer.run_var + eps)
+        x = torch.batch_norm_elemt(x, gamma, beta, mean, invstd, eps)
+        return x
 
     @staticmethod
     def backward(ctx, grad):
         # shape of grad: B*C*H*W
         (x, gamma, mean, invstd, count_tensor) = ctx.saved_tensors
         if config.args.BN_type == 'new':
-            gamma = gamma / invstd * 1. / torch.sqrt(ctx.layer.run_var + config.args.eps)
+            gamma = gamma / (invstd * torch.sqrt(ctx.layer.run_var + config.args.eps))
         sum_dy, sum_dy_xmu, grad_gamma, grad_beta = torch.batch_norm_backward_reduce(grad, x, mean, invstd, gamma, True, True, True)
 
         # synchronizing stats used to calculate input gradient.
