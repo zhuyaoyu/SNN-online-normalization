@@ -2,13 +2,10 @@ import datetime
 import os
 import time
 import torch
-from torch.utils.data import DataLoader
 
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.utils.tensorboard import SummaryWriter
-import sys
 from torch.cuda import amp
 from models import spiking_resnet_SEW, spiking_resnet_NF, spiking_vgg
 from modules import neurons, surrogate, neuron_spikingjelly
@@ -41,18 +38,17 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-config', type=str, help='config .yaml file')
-    parser.add_argument('-resume', type=str, help='model path to resume')
+    parser.add_argument('-ckpt', type=str, help='chekpoint path to resume')
     
     cfg = parser.parse_args()
     config.parse(cfg.config)
-    config.args.resume = cfg.resume
+    config.args.ckpt = cfg.ckpt
     args = config.args
 
     # print(args)
     # os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
 
     num_classes, trainset, testset = get_dataset(args)
-    train_data_loader = data.DataLoader(trainset, batch_size=args.b, shuffle=True, num_workers=args.j, pin_memory=True)
     test_data_loader = data.DataLoader(testset, batch_size=args.b, shuffle=False, num_workers=args.j, pin_memory=True)
 
     c_in = 2 if is_dynamic(args.dataset) else 3
@@ -70,8 +66,8 @@ def main():
     net.cuda()
 
 
-    if args.resume:
-        checkpoint = torch.load(args.resume, map_location='cpu')
+    if args.ckpt:
+        checkpoint = torch.load(args.ckpt, map_location='cpu')
         net.load_state_dict(checkpoint['net'])
         #optimizer.load_state_dict(checkpoint['optimizer'])
         #lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
