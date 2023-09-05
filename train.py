@@ -125,6 +125,8 @@ def main():
         out_dir += 'WS_'
     if args.BN:
         out_dir += 'BN_' + args.BN_type + '_'
+    if args.dynamic_threshold:
+        out_dir += 'DT_'
     if args.BPTT:
         out_dir += 'BPTT_'
     if args.lr_scheduler == 'CosALR':
