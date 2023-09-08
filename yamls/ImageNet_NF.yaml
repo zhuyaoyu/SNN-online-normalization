@@ -7,8 +7,10 @@ model: "online_spiking_resnet34"
 model_type: "NF"
 lr: 0.1
 weight_decay: 0.00002
+dynamic_threshold: True
 WS: False
 BN: True
+BN_type: "new"
 data_dir: "/home/data/public/ImageNet/"
 dataset: "imagenet"
 out_dir: "logs/imagenet"

@@ -145,7 +145,7 @@ class BNFunc(torch.autograd.Function):
     def forward(ctx, x, gamma, beta, layer):
         # print(dist.get_rank(), weight.shape, torch.mean(weight), torch.var(weight))
         eps = config.args.eps
-        if (layer.training and layer.init or not layer.training) and isinstance(layer.total_var, torch.Tensor):
+        if layer.training and layer.init and isinstance(layer.total_var, torch.Tensor):
             T = config.args.T_train if layer.training else config.args.T
             mean = layer.total_mean / T
             var = layer.total_var / T

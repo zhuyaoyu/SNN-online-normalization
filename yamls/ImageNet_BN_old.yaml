@@ -10,7 +10,7 @@ weight_decay: 0.00002
 dynamic_threshold: True
 WS: False
 BN: True
-BN_type: "new"
+BN_type: "old"
 data_dir: "/home/data/public/ImageNet/"
 dataset: "imagenet"
 out_dir: "logs/imagenet"
