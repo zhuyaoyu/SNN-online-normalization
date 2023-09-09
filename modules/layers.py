@@ -190,8 +190,12 @@ class BNFunc(torch.autograd.Function):
         # shape of grad: B*C*H*W
         (x, gamma, mean, invstd, count_tensor) = ctx.saved_tensors
         if config.args.BN_type == 'new':
-            gamma = gamma / (invstd * torch.sqrt(ctx.layer.run_var + config.args.eps))
+            dim = [0] if len(grad.shape) == 2 else [0,2,3]
+            run_mean, run_std = ctx.layer.run_mean, torch.sqrt(ctx.layer.run_var + config.args.eps)
+            gamma = gamma / (invstd * run_std)
         sum_dy, sum_dy_xmu, grad_gamma, grad_beta = torch.batch_norm_backward_reduce(grad, x, mean, invstd, gamma, True, True, True)
+        if config.args.BN_type == 'new':
+            grad_gamma += torch.sum(grad, dim=dim) * (mean - run_mean) / run_std
 
         # synchronizing stats used to calculate input gradient.
         if dist.is_available() and dist.is_initialized():
