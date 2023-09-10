@@ -195,7 +195,7 @@ class BNFunc(torch.autograd.Function):
             gamma = gamma / (invstd * run_std)
         sum_dy, sum_dy_xmu, grad_gamma, grad_beta = torch.batch_norm_backward_reduce(grad, x, mean, invstd, gamma, True, True, True)
         if config.args.BN_type == 'new':
-            grad_gamma += torch.sum(grad, dim=dim) * (mean - run_mean) / run_std
+            grad_gamma += sum_dy * (mean - run_mean) / run_std
 
         # synchronizing stats used to calculate input gradient.
         if dist.is_available() and dist.is_initialized():
