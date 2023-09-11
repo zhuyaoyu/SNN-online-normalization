@@ -53,7 +53,6 @@ class OnlineLIFNode(LIFNode):
         self.dropout = neuron_dropout
         if self.dropout > 0.0:
             self.register_memory('mask', None)
-        self.init = None
         self.init_threshold = v_threshold
 
     def neuronal_charge(self, x: torch.Tensor):
@@ -75,7 +74,6 @@ class OnlineLIFNode(LIFNode):
         if self.dropout > 0.0 and self.training:
             self.mask = torch.zeros_like(x).bernoulli_(1 - self.dropout)
             self.mask = self.mask.requires_grad_(False) / (1 - self.dropout)
-        self.init = True
     
     def get_decay_coef(self):
         self.decay = torch.tensor(1 - 1. / self.tau)
@@ -87,12 +85,11 @@ class OnlineLIFNode(LIFNode):
                 mean, std = torch.mean(x), torch.std(x)
                 if self.init:
                     self.th_ratio = (self.init_threshold - mean) / std
-                    self.init = False
                 self.v_threshold = mean + std * self.th_ratio
 
     def forward(self, x: torch.Tensor, **kwargs):
-        init = kwargs.get('init', False)
-        if init:
+        self.init = kwargs.get('init', False)
+        if self.init:
             self.forward_init(x)
 
         self.get_decay_coef()
