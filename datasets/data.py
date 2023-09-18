@@ -1,12 +1,13 @@
 ﻿import os
+import PIL
+import torch
+import numpy as np
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 from torchtoolbox.transform import Cutout
 from spikingjelly.datasets.cifar10_dvs import CIFAR10DVS
 from spikingjelly.datasets.dvs128_gesture import DVS128Gesture
 from spikingjelly.datasets import split_to_train_test_set, RandomTemporalDelete
-import torch
-import PIL
 
 
 def get_dataset(args):
@@ -33,14 +34,16 @@ def get_dataset(args):
         trainset = dataloader(root=args.data_dir, train=True, download=True, transform=transform_train)
         testset = dataloader(root=args.data_dir, train=False, download=True, transform=transform_test)
     elif dataset_name == 'cifar10dvs':
-        transform_train = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize(48),
-            transforms.RandomCrop(size=48),
-            transforms.ToTensor(),
-            transforms.Normalize((0.2728, 0.1295), (0.2225, 0.1290)),
-        ])
-        
+        def transform_train(data):
+            data = transforms.RandomResizedCrop(128, scale=(0.7, 1.0), interpolation=PIL.Image.NEAREST)(data)
+            resize = transforms.Resize(size=(48, 48))  # 48 48
+            data = resize(data).float()
+            flip = np.random.random() > 0.5
+            if flip:
+                data = torch.flip(data, dims=(3,))
+            data = function_nda(data)
+            return data.float()
+
         transform_test = transforms.Compose([
             transforms.ToPILImage(),
             transforms.Resize(48),
@@ -55,10 +58,10 @@ def get_dataset(args):
         trainset, testset = packaging_class(trainset, transform_train), packaging_class(testset, transform_test)
     elif dataset_name == 'dvsgesture':
         transform_train = transforms.Compose([
-            transforms.RandomResizedCrop(128, scale=(0.6, 1.0), interpolation=PIL.Image.NEAREST),
+            transforms.RandomResizedCrop(128, scale=(0.7, 1.0), interpolation=PIL.Image.NEAREST),
             transforms.Resize(size=(48, 48)),
             # transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(degrees=30),
+            transforms.RandomRotation(degrees=20),
             RandomTemporalDelete(T_remain=args.T, batch_first=False),
         ])
         transform_test = transforms.Compose([
@@ -111,3 +114,50 @@ class packaging_class(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.dataset)
+
+
+class MyCutout(object):
+
+    def __init__(self, length):
+        self.length = length
+
+    def __call__(self, img):
+        h = img.size(-2)
+        w = img.size(-1)
+        mask = np.ones((h, w), np.float32)
+        y = np.random.randint(h)
+        x = np.random.randint(w)
+        y1 = np.clip(y - self.length // 2, 0, h)
+        y2 = np.clip(y + self.length // 2, 0, h)
+        x1 = np.clip(x - self.length // 2, 0, w)
+        x2 = np.clip(x + self.length // 2, 0, w)
+        mask[y1: y2, x1: x2] = 0.
+        mask = torch.from_numpy(mask)
+        mask = mask.expand_as(img)
+        img = img * mask
+        return img
+
+
+def function_nda(data, M=1, N=2):
+    c = 15 * N
+    rotate_tf = transforms.RandomRotation(degrees=c)
+    e = 8 * N
+    cutout_tf = MyCutout(length=e)
+
+    def roll(data, N=1):
+        a = N * 2 + 1
+        off1 = np.random.randint(-a, a + 1)
+        off2 = np.random.randint(-a, a + 1)
+        return torch.roll(data, shifts=(off1, off2), dims=(2, 3))
+
+    def rotate(data, N):
+        return rotate_tf(data)
+
+    def cutout(data, N):
+        return cutout_tf(data)
+
+    transforms_list = [roll, rotate, cutout]
+    sampled_ops = np.random.choice(transforms_list, M)
+    for op in sampled_ops:
+        data = op(data, N)
+    return data
