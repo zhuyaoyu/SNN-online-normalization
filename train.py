@@ -24,6 +24,9 @@ import torch.utils.data as data
 import numpy as np
 
 import random
+import warnings
+
+warnings.filterwarnings('ignore')
 
 
 def init_seeds(_seed_):
@@ -185,17 +188,16 @@ def main():
         batch_idx = 0
         for frame, label in train_loader:
             batch_idx += 1
-            if is_dynamic(args.dataset):
-                frame = torch.stack(frame, dim=0)
             frame = frame.float().cuda()
             t_step = args.T_train if args.T_train is not None else args.T
 
-            if args.T_train and args.T_train != args.T:
-                assert(is_dynamic(args.dataset))
-                sec_list = np.random.choice(frame.shape[0], args.T_train, replace=False)
-                sec_list.sort()
-                frame = frame[sec_list]
-                t_step = args.T_train
+            if is_dynamic(args.dataset):
+                frame = frame.transpose(0,1)
+                if args.T_train and args.T_train != args.T:
+                    sec_list = np.random.choice(frame.shape[0], args.T_train, replace=False)
+                    sec_list.sort()
+                    frame = frame[sec_list]
+                    t_step = args.T_train
 
             label = label.cuda()
 
@@ -307,6 +309,8 @@ def main():
                 label = label.cuda()
                 t_step = args.T
                 total_loss = 0
+                if is_dynamic(args.dataset):
+                    frame = frame.transpose(0,1)
 
                 for t in range(t_step):
                     input_frame = frame[t] if is_dynamic(args.dataset) else frame

@@ -2,7 +2,6 @@
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 from torchtoolbox.transform import Cutout
-from datasets.augmentation import ToPILImage, Resize, Padding, RandomCrop, ToTensor, Normalize, RandomHorizontalFlip
 from spikingjelly.datasets.cifar10_dvs import CIFAR10DVS
 from spikingjelly.datasets.dvs128_gesture import DVS128Gesture
 from spikingjelly.datasets import split_to_train_test_set, RandomTemporalDelete
@@ -35,19 +34,18 @@ def get_dataset(args):
         testset = dataloader(root=args.data_dir, train=False, download=True, transform=transform_test)
     elif dataset_name == 'cifar10dvs':
         transform_train = transforms.Compose([
-            ToPILImage(),
-            Resize(48),
-            Padding(4),
-            RandomCrop(size=48, consistent=True),
-            ToTensor(),
-            Normalize((0.2728, 0.1295), (0.2225, 0.1290)),
+            transforms.ToPILImage(),
+            transforms.Resize(48),
+            transforms.RandomCrop(size=48),
+            transforms.ToTensor(),
+            transforms.Normalize((0.2728, 0.1295), (0.2225, 0.1290)),
         ])
         
         transform_test = transforms.Compose([
-            ToPILImage(),
-            Resize(48),
-            ToTensor(),
-            Normalize((0.2728, 0.1295), (0.2225, 0.1290)),
+            transforms.ToPILImage(),
+            transforms.Resize(48),
+            transforms.ToTensor(),
+            transforms.Normalize((0.2728, 0.1295), (0.2225, 0.1290)),
         ])
         num_classes = 10
         
@@ -67,8 +65,9 @@ def get_dataset(args):
             transforms.Resize(size=(48, 48)),
         ])
         num_classes = 11
-        trainset = DVS128Gesture(args.data_dir, train=True, data_type='frame', frames_number=args.T, split_by='number', transform=transform_train)
-        testset = DVS128Gesture(args.data_dir, train=False, data_type='frame', frames_number=args.T, split_by='number', transform=transform_test)
+        trainset = DVS128Gesture(args.data_dir, train=True, data_type='frame', frames_number=args.T, split_by='number')
+        testset = DVS128Gesture(args.data_dir, train=False, data_type='frame', frames_number=args.T, split_by='number')
+        trainset, testset = packaging_class(trainset, transform_train), packaging_class(testset, transform_test)
     elif dataset_name == 'imagenet':
         dataloader = datasets.ImageFolder
         num_classes = 1000
