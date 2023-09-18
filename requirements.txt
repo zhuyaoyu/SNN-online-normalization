@@ -3,3 +3,4 @@ tensorboard
 progress
 torchtoolbox
 numpy==1.20
+spikingjelly

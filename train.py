@@ -185,14 +185,16 @@ def main():
         batch_idx = 0
         for frame, label in train_loader:
             batch_idx += 1
+            if is_dynamic(args.dataset):
+                frame = torch.stack(frame, dim=0)
             frame = frame.float().cuda()
             t_step = args.T_train if args.T_train is not None else args.T
 
             if args.T_train and args.T_train != args.T:
                 assert(is_dynamic(args.dataset))
-                sec_list = np.random.choice(frame.shape[1], args.T_train, replace=False)
+                sec_list = np.random.choice(frame.shape[0], args.T_train, replace=False)
                 sec_list.sort()
-                frame = frame[:, sec_list]
+                frame = frame[sec_list]
                 t_step = args.T_train
 
             label = label.cuda()
@@ -205,7 +207,7 @@ def main():
                 optimizer.zero_grad()
             
             for t in range(t_step):
-                input_frame = frame[:, t] if is_dynamic(args.dataset) else frame
+                input_frame = frame[t] if is_dynamic(args.dataset) else frame
                 amp_context = amp.autocast if args.amp else nullcontext
                 with amp_context():
                     if t == 0:
@@ -307,7 +309,7 @@ def main():
                 total_loss = 0
 
                 for t in range(t_step):
-                    input_frame = frame[:, t] if is_dynamic(args.dataset) else frame
+                    input_frame = frame[t] if is_dynamic(args.dataset) else frame
                     if t == 0:
                         out_fr = net(input_frame, init=True)
                         total_fr = out_fr.clone().detach()

@@ -3,8 +3,11 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 from torchtoolbox.transform import Cutout
 from datasets.augmentation import ToPILImage, Resize, Padding, RandomCrop, ToTensor, Normalize, RandomHorizontalFlip
-from datasets.cifar10_dvs import CIFAR10DVS
-from datasets.dvs128_gesture import DVS128Gesture
+from spikingjelly.datasets.cifar10_dvs import CIFAR10DVS
+from spikingjelly.datasets.dvs128_gesture import DVS128Gesture
+from spikingjelly.datasets import split_to_train_test_set, RandomTemporalDelete
+import torch
+import PIL
 
 
 def get_dataset(args):
@@ -48,12 +51,24 @@ def get_dataset(args):
         ])
         num_classes = 10
         
-        trainset = CIFAR10DVS(args.data_dir, train=True, use_frame=True, frames_num=args.T, split_by='number', normalization=None, transform=transform_train)
-        testset = CIFAR10DVS(args.data_dir, train=False, use_frame=True, frames_num=args.T, split_by='number', normalization=None, transform=transform_test)
+        dataset = CIFAR10DVS(args.data_dir, data_type='frame', frames_number=args.T, split_by='number')
+        trainset, testset = split_to_train_test_set(train_ratio=0.9, origin_dataset=dataset, num_classes=10)
+
+        trainset, testset = packaging_class(trainset, transform_train), packaging_class(testset, transform_test)
     elif dataset_name == 'dvsgesture':
+        transform_train = transforms.Compose([
+            transforms.RandomResizedCrop(128, scale=(0.6, 1.0), interpolation=PIL.Image.NEAREST),
+            transforms.Resize(size=(48, 48)),
+            # transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(degrees=30),
+            RandomTemporalDelete(T_remain=args.T, batch_first=False),
+        ])
+        transform_test = transforms.Compose([
+            transforms.Resize(size=(48, 48)),
+        ])
         num_classes = 11
-        trainset = DVS128Gesture(args.data_dir, train=True, data_type='frame', frames_number=args.T, split_by='number')
-        testset = DVS128Gesture(args.data_dir, train=False, data_type='frame', frames_number=args.T, split_by='number')
+        trainset = DVS128Gesture(args.data_dir, train=True, data_type='frame', frames_number=args.T, split_by='number', transform=transform_train)
+        testset = DVS128Gesture(args.data_dir, train=False, data_type='frame', frames_number=args.T, split_by='number', transform=transform_test)
     elif dataset_name == 'imagenet':
         dataloader = datasets.ImageFolder
         num_classes = 1000
@@ -81,3 +96,19 @@ def get_dataset(args):
         testset = dataloader(root=valdir, transform=transform_test)
         
     return num_classes, trainset, testset
+
+
+class packaging_class(torch.utils.data.Dataset):
+    def __init__(self, dataset, transform=None):
+        self.transform = transform
+        self.dataset = dataset
+
+    def __getitem__(self, index):
+        data, label = self.dataset[index]
+        data = torch.FloatTensor(data)
+        if self.transform:
+            data = self.transform(data)
+        return data, label
+
+    def __len__(self):
+        return len(self.dataset)
