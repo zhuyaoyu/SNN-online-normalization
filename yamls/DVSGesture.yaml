@@ -6,11 +6,9 @@ epochs: 300
 T_max: 300
 weight_decay: 0.0005
 loss_lambda: 0.001
-drop_rate: 0.0
 T_train: 14
-WS: True
-tau_online_level: 1
-weight_online_level: 1
+WS: False
+BN: True
 data_dir: "../../datasets/dvs128_gesture/"
 dataset: "dvsgesture"
 out_dir: "logs/DVSGesture"

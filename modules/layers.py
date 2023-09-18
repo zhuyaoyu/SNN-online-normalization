@@ -116,7 +116,7 @@ class SynapseNeuron(nn.Module):
         if config.args.BN:
             x = self.bn(x, **kwargs)
             # x = self.bn(x)
-        spike = self.neuron(x)
+        spike = self.neuron(x, **kwargs)
         self.init = False
         return spike
 
