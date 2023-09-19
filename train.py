@@ -78,7 +78,7 @@ def main():
     if args.dataset != 'imagenet':
         # neuron0 = neurons.OnlinePLIFNode if not args.BPTT else neuron_spikingjelly.ParametricLIFNode
         neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
-        net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS)
+        net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS, light_classifier=args.light_classifier)
     else:
         neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
         assert(args.model_type is not None and args.model_type.upper() in ['SEW', 'NF'])
@@ -121,7 +121,7 @@ def main():
         start_epoch = checkpoint['epoch'] + 1
         max_test_acc = checkpoint['max_test_acc']
 
-    out_dir = os.path.join(args.out_dir, f'{args.model}_{args.cnf}_T_{args.T}_T_train_{args.T_train}_{args.opt}_lr_{args.lr}_tau_{args.tau}_wlvl_{args.weight_online_level}_')
+    out_dir = os.path.join(args.out_dir, f'{args.model}_T_{args.T}_T_train_{args.T_train}_{args.opt}_lr_{args.lr}_tau_{args.tau}_wlvl_{args.weight_online_level}_')
     if args.model_type is not None:
         out_dir += args.model_type + '_'
     if args.WS:
