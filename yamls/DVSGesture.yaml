@@ -1,7 +1,7 @@
 T: 20
 tau: 2
-b: 128
-lr: 0.02
+b: 32
+lr: 0.002
 epochs: 300
 T_max: 300
 weight_decay: 0.0005
