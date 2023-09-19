@@ -44,12 +44,10 @@ def get_dataset(args):
             data = function_nda(data)
             return data.float()
 
-        transform_test = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize(48),
-            transforms.ToTensor(),
-            transforms.Normalize((0.2728, 0.1295), (0.2225, 0.1290)),
-        ])
+        def transform_test(data):
+            resize = transforms.Resize(size=(48, 48))  # 48 48
+            data = resize(data).float()
+            return data.float()
         num_classes = 10
         
         dataset = CIFAR10DVS(args.data_dir, data_type='frame', frames_number=args.T, split_by='number')
