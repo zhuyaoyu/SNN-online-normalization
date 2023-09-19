@@ -31,7 +31,7 @@ def parse(fname):
                 'stochdepth_rate': 0.0,
                 'weight_decay': 0.0,
                 'eps': 1e-4,
-                'cnf': '',
+                'light_classifier': True,
                 'T_train': None,
                 'loss_lambda': 0.05,
                 'online_update': False,

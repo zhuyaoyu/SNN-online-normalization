@@ -11,6 +11,7 @@ dynamic_threshold: True
 WS: False
 BN: True
 BN_type: "new"
-data_dir: "../../datasets/dvs128_gesture/"
+light_classifier: False
+data_dir: "/root/autodl-tmp/dvs128_gesture"
 dataset: "dvsgesture"
 out_dir: "logs/DVSGesture"
