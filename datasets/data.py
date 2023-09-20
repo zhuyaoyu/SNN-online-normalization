@@ -59,7 +59,7 @@ def get_dataset(args):
             transforms.RandomResizedCrop(128, scale=(0.7, 1.0), interpolation=PIL.Image.NEAREST),
             transforms.Resize(size=(48, 48)),
             # transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(degrees=20),
+            transforms.RandomRotation(degrees=30),
             RandomTemporalDelete(T_remain=args.T, batch_first=False),
         ])
         transform_test = transforms.Compose([
