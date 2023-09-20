@@ -68,7 +68,7 @@ class OnlineSpikingVGG(nn.Module):
             )
         else:
             self.avgpool = nn.AdaptiveAvgPool2d((self.fc_hw, self.fc_hw))
-            linear_dim = min(4096, 512 * self.fc_hw ** 2)
+            linear_dim = 1024
             self.classifier = SequentialModule(
                 single_step_neuron,
                 SynapseNeuron(synapse=nn.Linear(512 * self.fc_hw ** 2, linear_dim, bias=True), neuron_class=single_step_neuron, **kwargs),

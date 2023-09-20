@@ -1,11 +1,12 @@
 T: 20
 tau: 2
-b: 32
-lr: 0.002
+b: 128
+lr: 0.05
 epochs: 300
 T_max: 300
 weight_decay: 0.0005
 loss_lambda: 0.001
+drop_rate: 0.05
 T_train: 14
 dynamic_threshold: True
 WS: False
