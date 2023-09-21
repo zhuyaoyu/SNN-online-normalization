@@ -180,8 +180,8 @@ class BNFunc(torch.autograd.Function):
         ctx.layer = layer
         ctx.save_for_backward(x, gamma, mean, invstd, count_all.to(torch.int32))
         if layer.training and config.args.BN_type == 'new':
-            if torch.max(invstd) < 50:
-                mean, invstd = layer.run_mean, 1. / torch.sqrt(layer.run_var + eps)
+            mean = layer.run_mean
+            invstd = torch.clip(1. / torch.sqrt(layer.run_var + eps), invstd / 10., invstd * 10.)
         x = torch.batch_norm_elemt(x, gamma, beta, mean, invstd, eps)
         return x
 
