@@ -5,10 +5,11 @@ epochs: 300
 T_max: 300
 lr: 0.1
 weight_decay: 0.0005
-dynamic_threshold: True
+# dynamic_threshold: True
 WS: False
 BN: True
-BN_type: "new"
+BPTT: True
+# BN_type: "new"
 data_dir: "/root/autodl-tmp/cifar10"
 dataset: "cifar10"
 out_dir: "logs/cifar10"

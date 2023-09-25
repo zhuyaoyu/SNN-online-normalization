@@ -180,8 +180,11 @@ class BNFunc(torch.autograd.Function):
         ctx.layer = layer
         ctx.save_for_backward(x, gamma, mean, invstd, count_all.to(torch.int32))
         if layer.training and config.args.BN_type == 'new':
-            mean = layer.run_mean
-            invstd = torch.clip(1. / torch.sqrt(layer.run_var + eps), invstd / 10., invstd * 10.)
+            run_invstd = 1. / torch.sqrt(layer.run_var + eps)
+            bound = 50. if config.args.dataset.lower() in ['dvsgesture', 'cifar10dvs'] else 20.
+            if max(torch.max(run_invstd / invstd), torch.max(invstd / run_invstd)) <= bound:
+                mean = layer.run_mean
+                invstd = run_invstd
         x = torch.batch_norm_elemt(x, gamma, beta, mean, invstd, eps)
         return x
 

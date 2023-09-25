@@ -1,12 +1,14 @@
 T: 4
 tau: 2
-b: 256
+b: 128
 epochs: 300
 T_max: 300
+lr: 0.1
 weight_decay: 0.0005
-lr: 0.2
+dynamic_threshold: True
 WS: False
 BN: True
-data_dir: "../../datasets/cifar100/"
+BN_type: "new"
+data_dir: "/root/autodl-tmp/cifar100"
 dataset: "cifar100"
 out_dir: "logs/cifar100"
