@@ -167,14 +167,18 @@ def main():
         test_loss /= test_samples
         test_acc /= test_samples
         spikes_all = np.array(spikes_all) / test_samples
+        dims = np.array(dims)
+        spikes_layer = np.mean(spikes_all, axis=0)
+        spikes_time = np.sum(spikes_all * dims.reshape(1,-1) / np.sum(dims), axis=1)
+        total_rate = np.mean(spikes_time)
         T, L = spikes_all.shape
-        total_rate = 0.
-        total_dim = 0
-        for i in range(L):
-            for t in range(T):
-                total_rate += spikes_all[t][i] * dims[i]
-            total_dim += dims[i]
-        total_rate /= total_dim * args.T
+        # total_rate = 0.
+        # total_dim = 0
+        # for i in range(L):
+        #     for t in range(T):
+        #         total_rate += spikes_all[t][i] * dims[i]
+        #     total_dim += dims[i]
+        # total_rate /= total_dim * args.T
 
         total_time = time.time() - start_time
 
@@ -183,6 +187,12 @@ def main():
         for i in range(L):
             print(f'layer={i+1}, spike_rate={list(spikes_all[i])}')
         print(f'total_spike_rate={total_rate}')
+        print(f'spikes_layer={spikes_layer}')
+        print(f'spikes_time={spikes_time}')
+        cfgname = cfg.config.split('/')[-1]
+        os.makedirs("stats", exist_ok=True)
+        outfile = os.path.join("stats", cfgname[:cfgname.find('.')] + '.npz')
+        np.savez(outfile, spikes_all=spikes_all, spikes_layer=spikes_layer, spikes_time=spikes_time, total_rate=total_rate)
 
 if __name__ == '__main__':
     main()
