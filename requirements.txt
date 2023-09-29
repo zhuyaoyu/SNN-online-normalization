@@ -1,3 +1,5 @@
+pytorch
+torchvision
 matplotlib
 tensorboard
 progress

@@ -13,24 +13,6 @@ from torch.utils.cpp_extension import load_inline, load
 from datetime import datetime
 import torch.distributed as dist
 
-if torch.__version__ < "1.11.0":
-    cpp_wrapper = load(name="cpp_wrapper", sources=["modules/cpp_wrapper.cpp"], verbose=True)
-    conv_backward_input = lambda grad_output, input, weight, padding, stride, dilation, groups: \
-        cpp_wrapper.cudnn_convolution_backward_input(input.shape, grad_output, weight, padding, stride, dilation, groups,
-                                                     cudnn.benchmark, cudnn.deterministic, cudnn.allow_tf32)
-    conv_backward_weight = lambda grad_output, input, weight, padding, stride, dilation, groups: \
-        cpp_wrapper.cudnn_convolution_backward_weight(weight.shape, grad_output, input, padding, stride, dilation, groups,
-                                                      cudnn.benchmark, cudnn.deterministic, cudnn.allow_tf32)
-else:
-    bias_sizes, output_padding = [0, 0, 0, 0], [0, 0]
-    transposed = False
-    conv_backward_input = lambda grad_output, input, weight, padding, stride, dilation, groups: \
-        torch.ops.aten.convolution_backward(grad_output, input, weight, bias_sizes, stride, padding, dilation,
-                                            transposed, output_padding, groups, [True, False, False])[0]
-    conv_backward_weight = lambda grad_output, input, weight, padding, stride, dilation, groups: \
-        torch.ops.aten.convolution_backward(grad_output, input, weight, bias_sizes, stride, padding, dilation,
-                                            transposed, output_padding, groups, [False, True, False])[1]
-
 
 def get_weight_sws(weight, gain, eps):
     fan_in = np.prod(weight.shape[1:])
