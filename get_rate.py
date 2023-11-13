@@ -94,6 +94,7 @@ def main():
         test_samples = 0
         batch_idx = 0
         spikes_all = [[] for _ in range(args.T)]
+        
         dims = None
         with torch.no_grad():
             for frame, label in test_data_loader:

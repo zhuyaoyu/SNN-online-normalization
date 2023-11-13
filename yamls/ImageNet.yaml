@@ -11,6 +11,6 @@ dynamic_threshold: True
 WS: False
 BN: True
 BN_type: "new"
-data_dir: "/home/data/public/ImageNet/"
+data_dir: "/root/autodl-tmp/imagenet/"
 dataset: "imagenet"
 out_dir: "logs/imagenet"
