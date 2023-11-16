@@ -1,3 +1,4 @@
+# python test_running_avg.py -config yamls/ImageNet_test_running_th.yaml -ckpt logs/imagenet/online_spiking_resnet34__T_4_T_train_4_SGD_lr_0.1_tau_2.0_wlvl_1_SEW_BN_new_DT_CosALR_100/checkpoint_max.pth
 T: 4
 tau: 2
 b: 256

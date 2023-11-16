@@ -67,8 +67,13 @@ class SynapseNeuron(nn.Module):
             self.eps = config.args.eps
 
         if config.args.BN:
-            self.bn = MySyncBN(num_features=shape[1])
-            # self.bn = nn.SyncBatchNorm(num_features=shape[1], momentum=0.1/config.args.T)
+            if config.args.BN_type in ['old', 'new']:
+                self.bn = MySyncBN(num_features=shape[1])
+                # self.bn = nn.SyncBatchNorm(num_features=shape[1], momentum=0.1/config.args.T)
+            elif config.args.BN_type == 'linear':
+                self.bn = LinearNorm(num_features=shape[1])
+            else:
+                raise NotImplementedError(f"BN type {config.args.BN_type} has not been implemented!")
 
         if neuron_class == OnlineLIFNode:
             self.neuron = neuron_class(**kwargs)
@@ -267,7 +272,7 @@ def get_norm_stat_ddp(input, layer, process_group, eps):
     return mean, invstd, count_all
 
 
-class LinearNorm(torch.autograd.Function):
+class LinearNorm(nn.Module):
     def __init__(self, num_features):
         super().__init__()
         self.gamma = nn.Parameter(torch.ones(num_features))
@@ -283,6 +288,28 @@ class LinearNorm(torch.autograd.Function):
 
     def forward(self, x, **kwargs):
         self.init = kwargs.get('init', False)
-        with torch.no_grad():
-            mean = torch.mean(x)
-        return 
+        if self.init:
+            T = config.args.T_train if self.training else config.args.T
+            mean = self.total_mean / T
+            var = self.total_var / T
+            # if config.args.BN_type == 'new': 
+            var -= mean ** 2
+            self.run_mean += (1 - self.momentum) * (mean - self.run_mean)
+            self.run_var += (1 - self.momentum) * (var - self.run_var)
+            self.total_mean = 0.
+            self.total_var = 0.
+        
+        dims = [0] if len(x.shape) == 2 else [0,2,3]
+        shape = [1,-1] if len(x.shape) == 2 else [1,-1,1,1]
+        mean = torch.mean(x, dim=dims).detach()
+        var = torch.var(x, dim=dims).detach()
+        self.total_mean += mean
+        self.total_var += var
+        # if config.args.BN_type == 'new': 
+        self.total_var += mean ** 2
+        x = calc_bn(x, self.run_mean.reshape(shape), self.run_var.reshape(shape), torch.tensor(config.args.eps), self.gamma.reshape(shape), self.beta.reshape(shape))
+        return x
+
+@torch.jit.script
+def calc_bn(x, mean, var, eps, gamma, beta):
+    return (x - mean) / torch.sqrt(var + eps) * gamma + beta

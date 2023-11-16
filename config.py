@@ -63,7 +63,7 @@ def parse(fname):
     if args.T_train is None:
         args.T_train = args.T
     args.BN_type = args.BN_type.lower()
-    assert(args.BN_type in ['old', 'new'])
+    assert(args.BN_type in ['old', 'new', 'linear'])
 
     if dist.is_available() and dist.is_initialized():
         args.b //= dist.get_world_size(dist.group.WORLD)
