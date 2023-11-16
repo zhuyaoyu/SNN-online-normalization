@@ -41,6 +41,8 @@ def parse(fname):
                 'WS': True,
                 'BPTT': False,
                 'weight_online_level': 1, # online level of weight, 1 for baseline, 4 for max online level
+                'fixed_test_threshold': False,
+                'th_momentum': 0.9,
                 }
     require_args = {'data_dir',
                     'dataset',

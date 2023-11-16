@@ -53,7 +53,7 @@ class OnlineLIFNode(LIFNode):
         self.dropout = neuron_dropout
         if self.dropout > 0.0:
             self.register_memory('mask', None)
-        if config.args.fixed_threshold:
+        if config.args.fixed_test_threshold:
             self.register_buffer('run_th', torch.ones(1))
             self.th_momentum = 1 - (1 - config.args.th_momentum) / config.args.T_train
         self.init_threshold = v_threshold
@@ -83,14 +83,14 @@ class OnlineLIFNode(LIFNode):
     
     def adjust_th(self):
         if config.args.dynamic_threshold:
-            if not config.args.fixed_threshold or self.train():
+            if not config.args.fixed_test_threshold or self.train():
                 with torch.no_grad():
                     x = self.v
                     mean, std = torch.mean(x), torch.std(x)
                     if self.init:
                         self.th_ratio = (self.init_threshold - mean) / std
                     self.v_threshold = mean + std * self.th_ratio
-                if not config.args.fixed_threshold:
+                if not config.args.fixed_test_threshold:
                     self.run_th += (1 - self.th_momentum) * (self.v_threshold - self.run_th)
             else:
                 self.v_threshold = self.run_th.item()

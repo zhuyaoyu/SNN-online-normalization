@@ -1,3 +1,5 @@
+#! python test_running_avg.py -config yamls/ImageNet_test_running_th.yaml -ckpt logs/imagenet/online_spiking_resnet34__T_4_T_train_4_SGD_lr_0.1_tau_2.0_wlvl_1_SEW_BN_new_DT_CosALR_100/checkpoint_max.pth
+
 import datetime
 import os
 import time
@@ -50,14 +52,10 @@ def main():
 
     
     cfg = parser.parse_args()
-    if cfg.local_rank >= 0:
-        torch.cuda.set_device(cfg.local_rank)
-        torch.distributed.init_process_group(backend=cfg.dist)
-        multigpu = True
-    else:
-        multigpu = False
+    multigpu = False
     init_seeds(1)
     config.parse(cfg.config)
+    config.args.ckpt = cfg.ckpt
     args = config.args
 
     # print(args)
@@ -89,23 +87,7 @@ def main():
     net.cuda()
     assert(args.ckpt)
     checkpoint = torch.load(args.ckpt, map_location='cpu')
-    net.load_state_dict(checkpoint['net'])
-
-    optimizer = None
-    if args.opt == 'SGD':
-        optimizer = torch.optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    elif args.opt == 'Adam':
-        optimizer = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    else:
-        raise NotImplementedError(args.opt)
-
-    lr_scheduler = None
-    if args.lr_scheduler == 'StepLR':
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
-    elif args.lr_scheduler == 'CosALR':
-        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.T_max)
-    else:
-        raise NotImplementedError(args.lr_scheduler)
+    net.load_state_dict(checkpoint['net'], strict=False)  # Set strict=False here for the unrecorded running threshold!
 
     scaler = None
     if args.amp:
@@ -117,15 +99,13 @@ def main():
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
         net.load_state_dict(checkpoint['net'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         start_epoch = checkpoint['epoch'] + 1
         max_test_acc = checkpoint['max_test_acc']
 
     criterion_mse = nn.MSELoss(reduce=True)
+    net.requires_grad_(False)
 
-    net.eval()
-    for epoch in range(start_epoch, args.epochs):
+    for epoch in range(1):
         start_time = time.time()
 
         batch_time = AverageMeter()
@@ -136,6 +116,7 @@ def main():
         end = time.time()
 
         bar = Bar('Processing', max=len(train_loader))
+        net.train()
 
         train_loss = 0
         train_acc = 0
@@ -159,9 +140,6 @@ def main():
             batch_loss = 0
             if args.BPTT:
                 bptt_loss = 0
-                optimizer.zero_grad()
-            else:
-                optimizer.zero_grad()
             
             for t in range(t_step):
                 input_frame = frame[t] if is_dynamic(args.dataset) else frame
@@ -181,28 +159,13 @@ def main():
                     else:
                         loss = F.cross_entropy(out_fr, label) / t_step
                 
-                ddp_context = net.no_sync if cfg.local_rank != -1 and t == t_step != 0 else nullcontext
-                with ddp_context():
-                    if args.amp:
-                        scaler.scale(loss).backward()
-                    else:
-                        if not args.BPTT:
-                            loss.backward()
-                        else:
-                            bptt_loss += loss
+                if args.BPTT:
+                    bptt_loss += loss
 
                 batch_loss += loss.item()
                 train_loss += loss.item() * label.numel()
             if args.BPTT:
-                bptt_loss.backward()
-                optimizer.step()
                 net.reset_v()
-            else:
-                if args.amp:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
 
             # measure accuracy and record loss
             prec1, prec5 = accuracy(total_fr.data, label.data, topk=(1, 5))
@@ -234,8 +197,6 @@ def main():
 
         train_loss /= train_samples
         train_acc /= train_samples
-
-        lr_scheduler.step()
 
         net.eval()
 
