@@ -265,3 +265,24 @@ def get_norm_stat_ddp(input, layer, process_group, eps):
     )
 
     return mean, invstd, count_all
+
+
+class LinearNorm(torch.autograd.Function):
+    def __init__(self, num_features):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(num_features))
+        self.beta = nn.Parameter(torch.zeros(num_features))
+        self.register_buffer('run_mean', torch.zeros(num_features))
+        self.register_buffer('run_var', torch.ones(num_features))
+        # for estimating total mean and var
+        self.total_mean = 0.
+        self.total_var = 0.
+        self.momentum = 0.9
+
+        self.last_training = False
+
+    def forward(self, x, **kwargs):
+        self.init = kwargs.get('init', False)
+        with torch.no_grad():
+            mean = torch.mean(x)
+        return 
