@@ -282,7 +282,7 @@ class LinearNorm(nn.Module):
         # for estimating total mean and var
         self.total_mean = 0.
         self.total_var = 0.
-        self.momentum = 0.9
+        self.momentum = 0.99
 
         self.last_training = False
 
@@ -308,6 +308,7 @@ class LinearNorm(nn.Module):
         # if config.args.BN_type == 'new': 
         self.total_var += mean ** 2
         x = calc_bn(x, self.run_mean.reshape(shape), self.run_var.reshape(shape), torch.tensor(config.args.eps), self.gamma.reshape(shape), self.beta.reshape(shape))
+        # x = calc_bn(x, mean.reshape(shape), var.reshape(shape), torch.tensor(config.args.eps), self.gamma.reshape(shape), self.beta.reshape(shape))
         return x
 
 @torch.jit.script
