@@ -154,6 +154,15 @@ class OnlineSpikingVGG(nn.Module):
             if isinstance(module, SynapseNeuron):
                 spikes.append([module.neuron.fr_all, module.neuron.dim])
         return spikes
+    
+    def get_mem(self):
+        mems = []
+        for module in self.features._modules.values():
+            if isinstance(module, self.single_step_neuron):
+                mems.append(module.v)
+            if isinstance(module, SynapseNeuron):
+                mems.append(module.neuron.v)
+        return mems
 
 
 

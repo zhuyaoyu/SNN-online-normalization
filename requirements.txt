@@ -1,6 +1,7 @@
 torch
 torchvision
 matplotlib
+seaborn
 tensorboard
 progress
 torchtoolbox

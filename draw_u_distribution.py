@@ -15,8 +15,8 @@ import argparse
 import math
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 import torch.utils.data as data
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
+import seaborn as sn
+import matplotlib.pyplot as plt
 
 _seed_ = 2023
 import random
@@ -92,9 +92,8 @@ def main():
         test_acc = 0
         test_samples = 0
         batch_idx = 0
-        spikes_all = [[] for _ in range(args.T)]
-        
-        dims = None
+    
+        mems_all = []
         with torch.no_grad():
             for frame, label in test_data_loader:
                 batch_idx += 1
@@ -120,17 +119,13 @@ def main():
                     else:
                         loss = F.cross_entropy(out_fr, label) / t_step
                     total_loss += loss
-                    spikes_batch = net.get_spike()
-                    if len(spikes_all[t]) == 0:
-                        dims = []
-                        for i in range(len(spikes_batch)):
-                            fr_all, dim = spikes_batch[i]
-                            spikes_all[t].append(fr_all)
-                            dims.append(dim)
+                    mems_t = net.get_mem()
+                    if len(mems_all) == 0:
+                        for mem in mems_t:
+                            mems_all.append(mem.reshape(1,-1).detach().cpu().numpy())
                     else:
-                        for i in range(len(spikes_batch)):
-                            fr_all, dim = spikes_batch[i]
-                            spikes_all[t][i] = spikes_all[t][i] + fr_all
+                        for i, mem in enumerate(mems_t):
+                            mems_all[i] = np.concatenate([mems_all[i], mem.reshape(1,-1).detach().cpu().numpy()], axis=0)
 
                 if args.BPTT:
                     net.reset_v()
@@ -162,37 +157,23 @@ def main():
                             top5=top5.avg,
                             )
                 bar.next()
+                break
         bar.finish()
 
         test_loss /= test_samples
         test_acc /= test_samples
-        spikes_all = np.array(spikes_all) / test_samples
-        dims = np.array(dims)
-        spikes_layer = np.mean(spikes_all, axis=0)
-        spikes_time = np.sum(spikes_all * dims.reshape(1,-1) / np.sum(dims), axis=1)
-        total_rate = np.mean(spikes_time)
-        T, L = spikes_all.shape
-        # total_rate = 0.
-        # total_dim = 0
-        # for i in range(L):
-        #     for t in range(T):
-        #         total_rate += spikes_all[t][i] * dims[i]
-        #     total_dim += dims[i]
-        # total_rate /= total_dim * args.T
 
-        total_time = time.time() - start_time
-
-        print(f'test_loss={test_loss}, test_acc={test_acc}, total_time={total_time}')
-        spikes_all = np.transpose(spikes_all)
-        for i in range(L):
-            print(f'layer={i+1}, spike_rate={list(spikes_all[i])}')
-        print(f'total_spike_rate={total_rate}')
-        print(f'spikes_layer={spikes_layer}')
-        print(f'spikes_time={spikes_time}')
+        pal = sn.blend_palette([sn.desaturate("royalblue", 0), "royalblue"], config.args.T)
+        for i, mem in enumerate(mems_all):
+            for t in range(len(pal)):
+                mem_t, color = mem[t], pal[t]
+                sn.kdeplot(mem_t, bw_adjust=.2, color=color, label=f"t={t}", fill=True)
+            plt.savefig(f"figs/layer_{i}.png")
+        
         cfgname = cfg.config.split('/')[-1]
         os.makedirs("stats", exist_ok=True)
-        outfile = os.path.join("stats", cfgname[:cfgname.find('.')] + '.npz')
-        np.savez(outfile, spikes_all=spikes_all, spikes_layer=spikes_layer, spikes_time=spikes_time, total_rate=total_rate)
+        outfile = os.path.join("stats", cfgname[:cfgname.find('.')] + '_membrane_potential.npz')
+        np.savez(outfile, membrane_potential=mems_all.reshape(-1))
 
 if __name__ == '__main__':
     main()

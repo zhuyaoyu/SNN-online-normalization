@@ -46,6 +46,13 @@ class SequentialModule(nn.Sequential):
             spikes_module = module.get_spike()
             spikes += spikes_module
         return spikes
+    
+    def get_mem(self):
+        mems = []
+        for module in self._modules.values():
+            mems_module = module.get_mem()
+            mems += mems_module
+        return mems
 
 
 class Scale(nn.Module):
@@ -126,6 +133,14 @@ class BasicBlock(nn.Module):
         neuron = self.convNeuron2.neuron
         spikes.append([neuron.fr_all, neuron.dim])
         return spikes
+    
+    def get_mem(self):
+        mems = []
+        neuron = self.convNeuron1.neuron
+        mems.append(neuron.v)
+        neuron = self.convNeuron2.neuron
+        mems.append(neuron.v)
+        return mems
 
 
 class Bottleneck(nn.Module):
@@ -188,6 +203,16 @@ class Bottleneck(nn.Module):
         neuron = self.convNeuron3.neuron
         spikes.append([neuron.fr_all, neuron.dim])
         return spikes
+    
+    def get_mem(self):
+        mems = []
+        neuron = self.convNeuron1.neuron
+        mems.append(neuron.v)
+        neuron = self.convNeuron2.neuron
+        mems.append(neuron.v)
+        neuron = self.convNeuron3.neuron
+        mems.append(neuron.v)
+        return mems
 
 
 class OnlineSpikingResNet(nn.Module):
@@ -319,6 +344,14 @@ class OnlineSpikingResNet(nn.Module):
         spikes += self.layer3.get_spike()
         spikes += self.layer4.get_spike()
         return spikes
+    
+    def get_mem(self):
+        mems = []
+        mems += self.layer1.get_mem()
+        mems += self.layer2.get_mem()
+        mems += self.layer3.get_mem()
+        mems += self.layer4.get_mem()
+        return mems
 
 
 def _online_spiking_resnet(arch, block, layers, pretrained, progress, single_step_neuron, **kwargs):
