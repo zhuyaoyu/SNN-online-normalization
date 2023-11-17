@@ -161,7 +161,7 @@ class OnlineSpikingVGG(nn.Module):
             if isinstance(module, self.single_step_neuron):
                 mems.append(module.v)
             if isinstance(module, SynapseNeuron):
-                mems.append(module.neuron.v)
+                mems.append(module.neuron.v_before_reset)
         return mems
 
 

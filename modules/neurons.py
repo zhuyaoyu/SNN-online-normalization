@@ -153,6 +153,9 @@ class OnlinePLIFNode(ParametricLIFNode):
             self.v = self.v.detach() * self.decay + x
         else:
             self.v = self.v.detach() * self.decay + self.v_reset * (1. - self.decay) + x
+        
+        if hasattr(config.args, 'record_v_stat'):
+            self.v_before_reset = self.v
 
     # should be initialized at the first time step
     def forward_init(self, x: torch.Tensor, shape=None):

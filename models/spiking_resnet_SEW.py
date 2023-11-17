@@ -137,9 +137,9 @@ class BasicBlock(nn.Module):
     def get_mem(self):
         mems = []
         neuron = self.convNeuron1.neuron
-        mems.append(neuron.v)
+        mems.append(neuron.v_before_reset)
         neuron = self.convNeuron2.neuron
-        mems.append(neuron.v)
+        mems.append(neuron.v_before_reset)
         return mems
 
 
@@ -207,11 +207,11 @@ class Bottleneck(nn.Module):
     def get_mem(self):
         mems = []
         neuron = self.convNeuron1.neuron
-        mems.append(neuron.v)
+        mems.append(neuron.v_before_reset)
         neuron = self.convNeuron2.neuron
-        mems.append(neuron.v)
+        mems.append(neuron.v_before_reset)
         neuron = self.convNeuron3.neuron
-        mems.append(neuron.v)
+        mems.append(neuron.v_before_reset)
         return mems
 
 

@@ -42,6 +42,7 @@ def main():
     cfg = parser.parse_args()
     config.parse(cfg.config)
     config.args.ckpt = cfg.ckpt
+    config.args.record_v_stat = True
     args = config.args
 
     # print(args)
@@ -167,7 +168,7 @@ def main():
         for i, mem in enumerate(mems_all):
             for t in range(len(pal)):
                 mem_t, color = mem[t], pal[t]
-                sn.kdeplot(mem_t, bw_adjust=.2, color=color, label=f"t={t}", fill=True)
+                sn.kdeplot(mem_t, bw_adjust=.5, color=color, label=f"t={t}", fill=True)
             plt.savefig(f"figs/layer_{i}.png")
         
         cfgname = cfg.config.split('/')[-1]
