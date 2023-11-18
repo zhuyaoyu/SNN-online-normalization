@@ -168,13 +168,13 @@ def main():
         for i, mem in enumerate(mems_all):
             for t in range(len(pal)):
                 mem_t, color = mem[t], pal[t]
-                sn.kdeplot(mem_t, bw_adjust=.5, color=color, label=f"t={t}", fill=True)
+                sn.kdeplot(mem_t, bw_adjust=.5, cut=0, color=color, label=f"t={t}", fill=True)
             plt.savefig(f"figs/layer_{i}.png")
         
         cfgname = cfg.config.split('/')[-1]
         os.makedirs("stats", exist_ok=True)
-        outfile = os.path.join("stats", cfgname[:cfgname.find('.')] + '_membrane_potential.npz')
-        np.savez(outfile, membrane_potential=mems_all.reshape(-1))
+        # outfile = os.path.join("stats", cfgname[:cfgname.find('.')] + '_membrane_potential.npz')
+        # np.savez(outfile, membrane_potential=np.array(mems_all))
 
 if __name__ == '__main__':
     main()

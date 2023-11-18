@@ -75,14 +75,18 @@ def main():
     # TODO: LIF or PLIF? should we add this choice?
     c_in = 2 if is_dynamic(args.dataset) else 3
     print(f'args.tau = {args.tau}')
+    
+    if args.model.find('vgg') >= 0:
+        model_set = spiking_vgg
+    else:
+        model_set = spiking_resnet_SEW if args.model_type.upper() == 'SEW' else spiking_resnet_NF
     if args.dataset != 'imagenet':
         # neuron0 = neurons.OnlinePLIFNode if not args.BPTT else neuron_spikingjelly.ParametricLIFNode
         neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
-        net = spiking_vgg.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS, light_classifier=args.light_classifier)
+        net = model_set.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, neuron_dropout=args.drop_rate, fc_hw=1, BN=args.BN, weight_standardization=args.WS, light_classifier=args.light_classifier)
     else:
         neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
         assert(args.model_type is not None and args.model_type.upper() in ['SEW', 'NF'])
-        model_set = spiking_resnet_SEW if args.model_type.upper() == 'SEW' else spiking_resnet_NF
         net = model_set.__dict__[args.model](single_step_neuron=neuron0, tau=args.tau, surrogate_function=surrogate.Sigmoid(), c_in=c_in, num_classes=num_classes, drop_rate=args.drop_rate, stochdepth_rate=args.stochdepth_rate, neuron_dropout=0.0, zero_init_residual=False)
     #print(net)
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
