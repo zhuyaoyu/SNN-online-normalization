@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import sys
 from torch.cuda import amp
-from models import spiking_resnet_SEW, spiking_resnet_NF, spiking_vgg
+from models import spiking_resnet_SEW, spiking_resnet_NF, spiking_resnet, spiking_vgg
 from modules import layers, neurons, surrogate, neuron_spikingjelly
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 from datasets.data import get_dataset
@@ -76,10 +76,16 @@ def main():
     c_in = 2 if is_dynamic(args.dataset) else 3
     print(f'args.tau = {args.tau}')
     
-    if args.model.find('vgg') >= 0:
+    if args.model.lower().find('vgg') >= 0:
         model_set = spiking_vgg
     else:
-        model_set = spiking_resnet_SEW if args.model_type.upper() == 'SEW' else spiking_resnet_NF
+        tp = args.model_type.upper()
+        if tp == 'SEW':
+            model_set = spiking_resnet_SEW
+        elif tp == 'NF':
+            model_set = spiking_resnet_NF
+        else:
+            model_set = spiking_resnet
     if args.dataset != 'imagenet':
         # neuron0 = neurons.OnlinePLIFNode if not args.BPTT else neuron_spikingjelly.ParametricLIFNode
         neuron0 = neurons.OnlineLIFNode if not args.BPTT else neurons.MyLIFNode
