@@ -6,7 +6,7 @@ T_max: 300
 model: "online_spiking_resnet19"
 model_type: "spiking"
 lr: 0.1
-weight_decay: 0.0005
+weight_decay: 0.0002
 dynamic_threshold: True
 WS: False
 BN: True
