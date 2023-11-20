@@ -288,7 +288,7 @@ class LinearNorm(nn.Module):
 
     def forward(self, x, **kwargs):
         self.init = kwargs.get('init', False)
-        if self.init:
+        if self.training and self.init:
             T = config.args.T_train if self.training else config.args.T
             mean = self.total_mean / T
             var = self.total_var / T
