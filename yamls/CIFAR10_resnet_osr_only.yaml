@@ -6,8 +6,10 @@ T_max: 300
 model: "online_spiking_resnet19"
 model_type: "spiking"
 lr: 0.1
+# loss_lambda: 0.05
+# cannot trained with higher weight_decay
 weight_decay: 0.00002
-dynamic_threshold: True
+dynamic_threshold: False
 WS: False
 BN: True
 BN_type: "new"

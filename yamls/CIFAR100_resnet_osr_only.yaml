@@ -7,10 +7,10 @@ model: "online_spiking_resnet19"
 model_type: "spiking"
 lr: 0.1
 weight_decay: 0.00002
-dynamic_threshold: True
+dynamic_threshold: False
 WS: False
 BN: True
 BN_type: "new"
-data_dir: "/root/autodl-tmp/cifar10"
-dataset: "cifar10"
-out_dir: "logs/cifar10"
+data_dir: "/root/autodl-tmp/cifar100"
+dataset: "cifar100"
+out_dir: "logs/cifar100"
