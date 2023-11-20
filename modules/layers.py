@@ -282,7 +282,7 @@ class LinearNorm(nn.Module):
         # for estimating total mean and var
         self.total_mean = 0.
         self.total_var = 0.
-        self.momentum = 0.9
+        self.momentum = 0.99
 
         self.last_training = False
 
