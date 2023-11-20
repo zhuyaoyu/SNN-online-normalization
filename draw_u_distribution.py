@@ -1,3 +1,5 @@
+# python draw_u_distribution.py -config yamls/CIFAR10.yaml -ckpt xxx.pth
+
 import datetime
 import os
 import time

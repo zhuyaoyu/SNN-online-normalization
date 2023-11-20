@@ -5,8 +5,8 @@ b: 128
 epochs: 300
 T_max: 300
 lr: 0.1
-weight_decay: 0.0005
-dynamic_threshold: True
+weight_decay: 0.00005
+dynamic_threshold: False
 WS: False
 BN: True
 BN_type: "linear"
