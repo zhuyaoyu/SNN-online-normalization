@@ -282,12 +282,13 @@ class LinearNorm(nn.Module):
         # for estimating total mean and var
         self.total_mean = 0.
         self.total_var = 0.
-        self.momentum = 0.99
+        self.momentum = 0.9
 
         self.last_training = False
 
     def forward(self, x, **kwargs):
         self.init = kwargs.get('init', False)
+        # if self.init:
         if self.training and self.init:
             T = config.args.T_train
             mean = self.total_mean / T
@@ -301,12 +302,13 @@ class LinearNorm(nn.Module):
         
         dims = [0] if len(x.shape) == 2 else [0,2,3]
         shape = [1,-1] if len(x.shape) == 2 else [1,-1,1,1]
-        mean = torch.mean(x, dim=dims).detach()
-        var = torch.var(x, dim=dims).detach()
-        self.total_mean += mean
-        self.total_var += var
-        # if config.args.BN_type == 'new': 
-        self.total_var += mean ** 2
+        if self.training:
+            mean = torch.mean(x, dim=dims).detach()
+            var = torch.var(x, dim=dims).detach()
+            self.total_mean += mean
+            self.total_var += var
+            # if config.args.BN_type == 'new': 
+            self.total_var += mean ** 2
         x = calc_bn(x, self.run_mean.reshape(shape), self.run_var.reshape(shape), torch.tensor(config.args.eps), self.gamma.reshape(shape), self.beta.reshape(shape))
         # x = calc_bn(x, mean.reshape(shape), var.reshape(shape), torch.tensor(config.args.eps), self.gamma.reshape(shape), self.beta.reshape(shape))
         return x
