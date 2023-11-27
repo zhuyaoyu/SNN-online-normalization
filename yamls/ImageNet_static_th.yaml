@@ -6,11 +6,11 @@ T_max: 100
 model: "online_spiking_resnet34"
 model_type: "SEW"
 lr: 0.1
-weight_decay: 0.00002
+# weight_decay: 0.00002
 dynamic_threshold: False
 WS: False
 BN: True
 BN_type: "new"
-data_dir: "/root/autodl-tmp/imagenet/"
+data_dir: "/home/data/public/ImageNet/"
 dataset: "imagenet"
 out_dir: "logs/imagenet"
