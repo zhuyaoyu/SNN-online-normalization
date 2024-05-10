@@ -1,5 +1,8 @@
 */__pycache__/*
 *.pyc
 results/*
+figs/*
+sh/*
 .vscode/*
 miscellaneous.py
+draw_u_distribution.py
