@@ -3,6 +3,8 @@
 results/*
 figs/*
 sh/*
+yamls/*_*.yaml
 .vscode/*
 miscellaneous.py
 draw_u_distribution.py
+test_running_avg.py
